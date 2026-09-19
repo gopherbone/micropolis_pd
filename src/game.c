@@ -21,7 +21,9 @@ typedef enum {
     MODE_EVAL,
     MODE_DISASTERS,
     MODE_SCENARIOS,
-    MODE_MENU
+    MODE_MENU,
+    MODE_SAVE_SLOTS,
+    MODE_LOAD_SLOTS
 } game_mode_t;
 
 static game_mode_t s_game_mode = MODE_PLAY;
@@ -176,13 +178,17 @@ static const char *s_system_menu_items[] = {
     "City Evaluation",
     "Disasters Menu",
     "Select Scenario",
+    "Save City to Slot",
+    "Load City from Slot",
     "Cycle Map Overlay",
     "Toggle Minimap Radar",
     "Simulation Speed",
-    "Save City",
     "Quit to Main Menu"
 };
-#define SYSTEM_MENU_COUNT 10
+#define SYSTEM_MENU_COUNT 11
+
+static char s_save_slot_labels[5][48];
+static char s_load_slot_labels[5][48];
 
 static void open_system_menu(void)
 {
@@ -193,6 +199,48 @@ static void open_system_menu(void)
         s_menu_modal.items[i] = s_system_menu_items[i];
     }
     s_game_mode = MODE_MENU;
+}
+
+static void open_save_slots_menu(void)
+{
+    s_menu_modal.title = "SAVE CITY TO SLOT";
+    s_menu_modal.item_count = 5;
+    s_menu_modal.selected_index = 0;
+    for (int i = 0; i < 4; i++) {
+        city_meta_t meta;
+        if (city_get_slot_meta(i + 1, &meta) && meta.exists) {
+            snprintf(s_save_slot_labels[i], sizeof(s_save_slot_labels[i]),
+                     "Slot %d: %.12s (%d, $%ldk)", i + 1, meta.name, meta.year, (long)(meta.funds / 1000));
+        } else {
+            snprintf(s_save_slot_labels[i], sizeof(s_save_slot_labels[i]),
+                     "Slot %d: [Empty Slot]", i + 1);
+        }
+        s_menu_modal.items[i] = s_save_slot_labels[i];
+    }
+    snprintf(s_save_slot_labels[4], sizeof(s_save_slot_labels[4]), "Back");
+    s_menu_modal.items[4] = s_save_slot_labels[4];
+    s_game_mode = MODE_SAVE_SLOTS;
+}
+
+static void open_load_slots_menu(void)
+{
+    s_menu_modal.title = "LOAD CITY FROM SLOT";
+    s_menu_modal.item_count = 5;
+    s_menu_modal.selected_index = 0;
+    for (int i = 0; i < 4; i++) {
+        city_meta_t meta;
+        if (city_get_slot_meta(i + 1, &meta) && meta.exists) {
+            snprintf(s_load_slot_labels[i], sizeof(s_load_slot_labels[i]),
+                     "Slot %d: %.12s (%d, $%ldk)", i + 1, meta.name, meta.year, (long)(meta.funds / 1000));
+        } else {
+            snprintf(s_load_slot_labels[i], sizeof(s_load_slot_labels[i]),
+                     "Slot %d: [Empty Slot]", i + 1);
+        }
+        s_menu_modal.items[i] = s_load_slot_labels[i];
+    }
+    snprintf(s_load_slot_labels[4], sizeof(s_load_slot_labels[4]), "Back");
+    s_menu_modal.items[4] = s_load_slot_labels[4];
+    s_game_mode = MODE_LOAD_SLOTS;
 }
 
 static void trigger_disaster(int idx)
@@ -405,6 +453,37 @@ void game_start_embedded_city(const char *name)
     show_toast("Loaded City", 3.0f);
 }
 
+int game_save_slot(int slot)
+{
+    micropolis_ensure_init();
+    if (!city_save_slot(slot)) {
+        show_toast("Failed to Save City!", 2.5f);
+        return 0;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Saved Slot %d: %s", slot, CityName ? CityName : "City");
+    show_toast(buf, 2.5f);
+    return 1;
+}
+
+int game_load_slot(int slot)
+{
+    micropolis_ensure_init();
+    if (!city_load_slot(slot)) {
+        show_toast("Failed to Load City!", 2.5f);
+        return 0;
+    }
+    g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
+    g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
+    g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
+    g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
+    s_game_mode = MODE_PLAY;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Loaded Slot %d: %s", slot, CityName ? CityName : "City");
+    show_toast(buf, 3.0f);
+    return 1;
+}
+
 void game_open_budget(void)
 {
     micropolis_ensure_init();
@@ -499,6 +578,28 @@ static void update_modal_budget(void)
 
 static void update_modal_menu(int menu_type)
 {
+    /* Mouse Hover / Click for modal items */
+    const sim_mouse_t *m = sim_input_get_mouse();
+    int item_h = 16;
+    int w = 240;
+    int h = 40 + s_menu_modal.item_count * item_h;
+    int cx = g_sim_viewport.view_w / 2;
+    int cy = g_sim_viewport.view_h / 2;
+    int pos_x = cx - w / 2;
+    int pos_y = cy - h / 2;
+    for (int i = 0; i < s_menu_modal.item_count; i++) {
+        int ry = pos_y + 26 + i * item_h;
+        if (m->pos.x >= pos_x + 6 && m->pos.x <= pos_x + w - 6 &&
+            m->pos.y >= ry - 2 && m->pos.y < ry + item_h - 2) {
+            if (s_menu_modal.selected_index != i) {
+                s_menu_modal.selected_index = i;
+            }
+            if (m->left_pressed) {
+                sim_input_trigger_action(SIM_ACT_PRIMARY);
+            }
+        }
+    }
+
     if (sim_action_pressed(SIM_ACT_UP)) {
         s_menu_modal.selected_index = (s_menu_modal.selected_index + s_menu_modal.item_count - 1) % s_menu_modal.item_count;
         sound_play_sound("assets/sounds/button.wav", 0.7f);
@@ -534,17 +635,23 @@ static void update_modal_menu(int menu_type)
             case 4: /* Scenarios */
                 open_scenarios_menu();
                 break;
-            case 5: /* Cycle Overlay */
+            case 5: /* Save City to Slot */
+                open_save_slots_menu();
+                break;
+            case 6: /* Load City from Slot */
+                open_load_slots_menu();
+                break;
+            case 7: /* Cycle Overlay */
                 g_sim_viewport.overlay = (g_sim_viewport.overlay + 1) % OVERLAY_COUNT;
                 s_game_mode = MODE_PLAY;
                 show_toast("Overlay Changed", 1.5f);
                 break;
-            case 6: /* Toggle Minimap */
+            case 8: /* Toggle Minimap */
                 g_sim_viewport.show_minimap = !g_sim_viewport.show_minimap;
                 s_game_mode = MODE_PLAY;
                 show_toast(g_sim_viewport.show_minimap ? "Minimap ON" : "Minimap OFF", 1.5f);
                 break;
-            case 7: /* Speed */
+            case 9: /* Speed */
                 SimSpeed = (SimSpeed + 1) % 4;
                 s_game_mode = MODE_PLAY;
                 {
@@ -552,22 +659,41 @@ static void update_modal_menu(int menu_type)
                     show_toast(spd_names[SimSpeed], 1.5f);
                 }
                 break;
-            case 8: /* Save City */
-                SaveCity();
-                s_game_mode = MODE_PLAY;
-                show_toast("City Saved", 2.0f);
-                break;
-            case 9: /* Quit to Main Menu */
+            case 10: /* Quit to Main Menu */
                 scene_set(scene_title_create());
                 break;
             default:
                 s_game_mode = MODE_PLAY;
                 break;
             }
+        } else if (menu_type == 3) { /* Save Slots */
+            if (sel < 4) {
+                game_save_slot(sel + 1);
+                s_game_mode = MODE_PLAY;
+            } else {
+                open_system_menu();
+            }
+        } else if (menu_type == 4) { /* Load Slots */
+            if (sel < 4) {
+                city_meta_t meta;
+                if (city_get_slot_meta(sel + 1, &meta) && meta.exists) {
+                    game_load_slot(sel + 1);
+                    s_game_mode = MODE_PLAY;
+                } else {
+                    sound_play_sound("assets/sounds/uh-uh.wav", 1.0f);
+                    show_toast("Slot is Empty!", 1.5f);
+                }
+            } else {
+                open_system_menu();
+            }
         }
     }
     if (sim_action_pressed(SIM_ACT_SECONDARY)) {
-        s_game_mode = MODE_PLAY;
+        if (menu_type == 3 || menu_type == 4) {
+            open_system_menu();
+        } else {
+            s_game_mode = MODE_PLAY;
+        }
     }
 }
 
@@ -619,6 +745,14 @@ static void micropolis_scene_update(scene_t *self, float dt)
     }
     if (s_game_mode == MODE_MENU) {
         update_modal_menu(2);
+        return;
+    }
+    if (s_game_mode == MODE_SAVE_SLOTS) {
+        update_modal_menu(3);
+        return;
+    }
+    if (s_game_mode == MODE_LOAD_SLOTS) {
+        update_modal_menu(4);
         return;
     }
     if (s_game_mode == MODE_QUERY || s_game_mode == MODE_EVAL) {
@@ -908,7 +1042,9 @@ static void micropolis_scene_draw(scene_t *self)
         sim_render_budget_modal(&s_budget_modal, center);
     } else if (s_game_mode == MODE_EVAL) {
         sim_render_eval_modal(&s_eval_modal, center);
-    } else if (s_game_mode == MODE_DISASTERS || s_game_mode == MODE_SCENARIOS || s_game_mode == MODE_MENU) {
+    } else if (s_game_mode == MODE_DISASTERS || s_game_mode == MODE_SCENARIOS ||
+               s_game_mode == MODE_MENU || s_game_mode == MODE_SAVE_SLOTS ||
+               s_game_mode == MODE_LOAD_SLOTS) {
         sim_render_menu_modal(&s_menu_modal, center);
     }
 

@@ -674,6 +674,19 @@ void GetAssValue(void);
 int GetUnemployment(void);
 
 /* s_fileio.c */
+typedef struct {
+  int exists;
+  char name[32];
+  long funds;
+  long population;
+  int year;
+  int month;
+  int difficulty;
+  int score;
+} city_meta_t;
+
+#define CITY_MAX_SLOTS 4
+
 int SaveCity(void);
 int SaveCityAs(char *filename);
 int loadFile(char *filename);
@@ -688,6 +701,11 @@ void DidntLoadCity(char *msg);
 void DoSaveCityAs(void);
 void DidSaveCity(void);
 void DidntSaveCity(char *msg);
+int city_read_meta(const char *filename, city_meta_t *meta);
+int city_get_slot_path(int slot, char *out_path, size_t max_len);
+int city_save_slot(int slot);
+int city_load_slot(int slot);
+int city_get_slot_meta(int slot, city_meta_t *meta);
 
 /* s_gen.c */
 void GenerateNewCity(void);

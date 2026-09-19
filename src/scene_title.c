@@ -14,6 +14,7 @@
 typedef enum {
     TITLE_MENU_MAIN = 0,
     TITLE_MENU_DIFFICULTY,
+    TITLE_MENU_LOAD_SLOTS,
     TITLE_MENU_SCENARIOS,
     TITLE_MENU_ABOUT
 } title_menu_state_t;
@@ -25,12 +26,35 @@ static float s_backdrop_scroll = 0.0f;
 
 static const char *s_main_options[] = {
     "Start New City",
-    "Load Example City (About.cty)",
+    "Load Saved City",
     "Play Scenario Campaign",
     "Sound FX: [ON]",
     "About Micropolis"
 };
 #define MAIN_OPTIONS_COUNT 5
+
+static char s_title_slot_labels[6][48];
+static const char *s_title_slot_ptrs[6];
+#define LOAD_SLOTS_COUNT 6
+
+static void refresh_title_slots(void)
+{
+    for (int i = 0; i < 4; i++) {
+        city_meta_t meta;
+        if (city_get_slot_meta(i + 1, &meta) && meta.exists) {
+            snprintf(s_title_slot_labels[i], sizeof(s_title_slot_labels[i]),
+                     "Slot %d: %.14s (%d, $%ldk)", i + 1, meta.name, meta.year, (long)(meta.funds / 1000));
+        } else {
+            snprintf(s_title_slot_labels[i], sizeof(s_title_slot_labels[i]),
+                     "Slot %d: [Empty Slot]", i + 1);
+        }
+        s_title_slot_ptrs[i] = s_title_slot_labels[i];
+    }
+    snprintf(s_title_slot_labels[4], sizeof(s_title_slot_labels[4]), "Load Example City (About.cty)");
+    s_title_slot_ptrs[4] = s_title_slot_labels[4];
+    snprintf(s_title_slot_labels[5], sizeof(s_title_slot_labels[5]), "Back");
+    s_title_slot_ptrs[5] = s_title_slot_labels[5];
+}
 
 static const char *s_diff_options[] = {
     "Easy ($20,000)",
@@ -75,6 +99,7 @@ static void scene_title_update(scene_t *self, float dt)
     switch (s_menu_state) {
     case TITLE_MENU_MAIN:       count = MAIN_OPTIONS_COUNT; break;
     case TITLE_MENU_DIFFICULTY: count = DIFF_OPTIONS_COUNT; break;
+    case TITLE_MENU_LOAD_SLOTS: count = LOAD_SLOTS_COUNT; break;
     case TITLE_MENU_SCENARIOS:  count = SCENARIO_OPTIONS_COUNT; break;
     case TITLE_MENU_ABOUT:      count = 1; break;
     }
@@ -91,9 +116,9 @@ static void scene_title_update(scene_t *self, float dt)
 
     /* Mouse Hover / Click */
     const sim_mouse_t *m = sim_input_get_mouse();
-    int menu_w = 260;
+    int menu_w = (s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 300 : 260;
     int menu_x = (400 - menu_w) / 2;
-    int menu_y = (s_menu_state == TITLE_MENU_SCENARIOS) ? 60 : 95;
+    int menu_y = (s_menu_state == TITLE_MENU_SCENARIOS) ? 55 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 65 : 95);
     int item_h = 16;
 
     for (int i = 0; i < count; i++) {
@@ -129,9 +154,10 @@ static void scene_title_update(scene_t *self, float dt)
                 s_menu_state = TITLE_MENU_DIFFICULTY;
                 s_selected_index = 0;
                 break;
-            case 1: /* Load Example City */
-                game_start_embedded_city("about.cty");
-                scene_set(game_get_scene());
+            case 1: /* Load Saved City */
+                refresh_title_slots();
+                s_menu_state = TITLE_MENU_LOAD_SLOTS;
+                s_selected_index = 0;
                 break;
             case 2: /* Scenario Campaign */
                 s_menu_state = TITLE_MENU_SCENARIOS;
@@ -153,6 +179,22 @@ static void scene_title_update(scene_t *self, float dt)
             } else {
                 s_menu_state = TITLE_MENU_MAIN;
                 s_selected_index = 0;
+            }
+        } else if (s_menu_state == TITLE_MENU_LOAD_SLOTS) {
+            if (s_selected_index < 4) {
+                city_meta_t meta;
+                if (city_get_slot_meta(s_selected_index + 1, &meta) && meta.exists) {
+                    game_load_slot(s_selected_index + 1);
+                    scene_set(game_get_scene());
+                } else {
+                    sound_play_sound("assets/sounds/uh-uh.wav", 1.0f);
+                }
+            } else if (s_selected_index == 4) {
+                game_start_embedded_city("about.cty");
+                scene_set(game_get_scene());
+            } else {
+                s_menu_state = TITLE_MENU_MAIN;
+                s_selected_index = 1;
             }
         } else if (s_menu_state == TITLE_MENU_SCENARIOS) {
             if (s_selected_index < 8) {
@@ -201,9 +243,9 @@ static void scene_title_draw(scene_t *self)
     /* 2. Title Banner */
     if (s_menu_state != TITLE_MENU_SCENARIOS) {
         /* Large high-contrast logo banner */
-        render_fill_rect(vec2i(50, 16), vec2i(300, 48), rgba(20, 25, 45, 240));
-        render_draw_rect(vec2i(50, 16), vec2i(300, 48), rgba(255, 215, 60, 255));
-        render_draw_rect(vec2i(52, 18), vec2i(296, 44), rgba(100, 120, 180, 255));
+        render_fill_rect(vec2i(50, 16), vec2i(300, 48), rgba_black());
+        render_draw_rect(vec2i(50, 16), vec2i(300, 48), rgba_white());
+        render_draw_rect(vec2i(52, 18), vec2i(296, 44), rgba_white());
 
         if (s_font) {
             font_draw_bmfont(s_font, vec2i(200, 24), "MICROPOLIS", FONT_ALIGN_CENTER, rgba(255, 230, 80, 255));
@@ -212,19 +254,20 @@ static void scene_title_draw(scene_t *self)
     }
 
     /* 3. Menu Box */
-    int menu_w = 270;
-    int menu_h = (s_menu_state == TITLE_MENU_SCENARIOS) ? 175 : 125;
+    int menu_w = (s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 310 : 270;
+    int menu_h = (s_menu_state == TITLE_MENU_SCENARIOS) ? 175 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 140 : 125);
     int menu_x = (400 - menu_w) / 2;
-    int menu_y = (s_menu_state == TITLE_MENU_SCENARIOS) ? 35 : 82;
+    int menu_y = (s_menu_state == TITLE_MENU_SCENARIOS) ? 35 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 50 : 82);
 
-    render_fill_rect(vec2i(menu_x, menu_y), vec2i(menu_w, menu_h), rgba(16, 20, 32, 245));
-    render_draw_rect(vec2i(menu_x, menu_y), vec2i(menu_w, menu_h), rgba(120, 130, 160, 255));
-    render_draw_rect(vec2i(menu_x + 2, menu_y + 2), vec2i(menu_w - 4, menu_h - 4), rgba(60, 70, 100, 255));
+    render_fill_rect(vec2i(menu_x, menu_y), vec2i(menu_w, menu_h), rgba_black());
+    render_draw_rect(vec2i(menu_x, menu_y), vec2i(menu_w, menu_h), rgba_white());
+    render_draw_rect(vec2i(menu_x + 2, menu_y + 2), vec2i(menu_w - 4, menu_h - 4), rgba_white());
+    render_draw_line(vec2i(menu_x + 2, menu_y + 20), vec2i(menu_x + menu_w - 3, menu_y + 20), rgba_white());
 
     /* Header title inside box */
-    render_fill_rect(vec2i(menu_x + 3, menu_y + 3), vec2i(menu_w - 6, 16), rgba(35, 45, 75, 255));
     const char *header = "MAIN MENU";
     if (s_menu_state == TITLE_MENU_DIFFICULTY) header = "SELECT DIFFICULTY";
+    else if (s_menu_state == TITLE_MENU_LOAD_SLOTS) header = "LOAD SAVED CITY";
     else if (s_menu_state == TITLE_MENU_SCENARIOS) header = "SCENARIO CAMPAIGN";
     else if (s_menu_state == TITLE_MENU_ABOUT) header = "ABOUT MICROPOLIS";
 
@@ -247,12 +290,15 @@ static void scene_title_draw(scene_t *self)
         if (s_menu_state == TITLE_MENU_DIFFICULTY) {
             items = s_diff_options;
             count = DIFF_OPTIONS_COUNT;
+        } else if (s_menu_state == TITLE_MENU_LOAD_SLOTS) {
+            items = s_title_slot_ptrs;
+            count = LOAD_SLOTS_COUNT;
         } else if (s_menu_state == TITLE_MENU_SCENARIOS) {
             items = s_scenario_options;
             count = SCENARIO_OPTIONS_COUNT;
         }
 
-        int item_h = (s_menu_state == TITLE_MENU_SCENARIOS) ? 15 : 18;
+        int item_h = (s_menu_state == TITLE_MENU_SCENARIOS) ? 15 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 16 : 18);
         int start_y = menu_y + 22;
 
         for (int i = 0; i < count; i++) {
@@ -260,7 +306,7 @@ static void scene_title_draw(scene_t *self)
             bool sel = (s_selected_index == i);
 
             if (sel) {
-                render_fill_rect(vec2i(menu_x + 6, ry - 1), vec2i(menu_w - 12, item_h), rgba(60, 75, 110, 200));
+                render_draw_rect(vec2i(menu_x + 6, ry - 1), vec2i(menu_w - 12, item_h), rgba_white());
             }
 
             char buf[64];

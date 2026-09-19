@@ -157,17 +157,23 @@ UpdateGameLevel(void)
 }
 
 
+static char s_city_name_storage[64] = "Micropolis";
+
 void
 setCityName(char *name)
 {
-  char *cp = name;
+  char buf[64];
+  if (!name) name = "";
+  strncpy(buf, name, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
 
+  char *cp = buf;
   while (*cp) {
-    if (!isalnum(*cp))
+    if (!isalnum((unsigned char)*cp))
       *cp = '_';
     cp++;
   }
-  setAnyCityName(name);
+  setAnyCityName(buf);
 }
 
 
@@ -176,7 +182,14 @@ setAnyCityName(char *name)
 {
   char buf[1024];
 
-  CityName = name;
+  if (name && name[0]) {
+    strncpy(s_city_name_storage, name, sizeof(s_city_name_storage) - 1);
+    s_city_name_storage[sizeof(s_city_name_storage) - 1] = '\0';
+  } else {
+    s_city_name_storage[0] = '\0';
+  }
+  CityName = s_city_name_storage;
+
   sprintf(buf, "UISetCityName {%s}", CityName);
   Eval(buf);
 }

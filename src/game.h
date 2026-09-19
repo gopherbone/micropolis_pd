@@ -13,6 +13,9 @@ void game_open_budget(void);
 void game_open_eval(void);
 void game_open_system_menu(void);
 
+int game_save_slot(int slot);
+int game_load_slot(int slot);
+
 #endif // GAME_H
 
 

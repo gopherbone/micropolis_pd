@@ -99,7 +99,32 @@ found_dirt:
     /* 9. Procedural Generation */
     GenerateNewCity();
     assert(TotalFunds > 0);
+    setCityName("TestMetropolis");
     printf("[PASS] Procedural terrain generator generated new map\n");
+
+    /* 10. Save / Load Slot Persistence Test */
+    int save_ok = city_save_slot(1);
+    assert(save_ok == 1);
+    city_meta_t meta;
+    int meta_ok = city_get_slot_meta(1, &meta);
+    assert(meta_ok == 1);
+    assert(meta.exists == 1);
+    assert(strcmp(meta.name, "TestMetropolis") == 0);
+    assert(meta.funds == TotalFunds);
+    printf("[PASS] Slot 1 saved and metadata verified: Name='%s', Funds=$%ld, Year=%d\n",
+           meta.name, meta.funds, meta.year);
+
+    /* Modify state and reload from Slot 1 */
+    SetFunds(1234);
+    setCityName("TemporaryName");
+    int load_ok = city_load_slot(1);
+    assert(load_ok == 1);
+    assert(TotalFunds == meta.funds);
+    assert(strcmp(CityName, "TestMetropolis") == 0);
+    printf("[PASS] Slot 1 successfully loaded back: Name='%s', Funds=$%ld\n", CityName, (long)TotalFunds);
+
+    /* Clean up temporary slot file */
+    remove("city_slot1.cty");
 
     printf("\n>>> ALL MICROPOLIS SIMULATION TESTS PASSED! <<<\n");
     return 0;

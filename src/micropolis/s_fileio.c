@@ -1,5 +1,7 @@
 #include "sim.h"
 #include <string.h>
+#include <stdlib.h>
+#include "platform.h"
 
 
 /*
@@ -70,128 +72,39 @@ _half_swap_longs(long *buf, int len)
 #define HALF_SWAP_LONGS(a, b)	do { if (_host_little_endian()) _half_swap_longs(a, b); } while (0)
 
 
+#define CTY_FILE_SIZE     27120
+#define MISC_MAGIC_OFFSET 64
+#define MISC_NAME_OFFSET  68
+#define CTY_MAGIC         "TINYCTY1"
+
+/* Load a city from an in-memory buffer (27120 bytes standard) */
 static int
-_load_short(short *buf, int len, FILE *f)
+_load_mem(const unsigned char *src, QUAD size)
 {
-  if (fread(buf, sizeof(short), len, f) != len)
-     return 0;
+  const unsigned char *p = src;
 
-  SWAP_SHORTS(buf, len);	/* to intel */
-
-  return 1;
-}
-
-
-#if 0
-static int
-_load_long(long *buf, int len, FILE *f)
-{
-  if (fread(buf, sizeof(long), len, f) != len)
-     return 0;
-
-  SWAP_LONGS(buf, len);	/* to intel */
-
-  return 1;
-}
-#endif
-
-
-static int
-_save_short(short *buf, int len, FILE *f)
-{
-
-  SWAP_SHORTS(buf, len);	/* to MAC */
-
-  if (fwrite(buf, sizeof(short), len, f) != len)
-     return 0;
-
-  SWAP_SHORTS(buf, len);	/* back to intel */
-
-  return 1;
-}
-
-
-#if 0
-static int
-_save_long(long *buf, int len, FILE *f)
-{
-
-  SWAP_LONGS(buf, len);	/* to MAC */
-
-  if (fwrite(buf, sizeof(long), len, f) != len)
-     return 0;
-
-  SWAP_LONGS(buf, len);	/* back to intel */
-
-  return 1;
-}
-#endif
-
-
-static
-int
-_load_file(char *filename, char *dir)
-{
-  FILE *f;
-  char path[512];
-  QUAD size;
-
-#ifdef MSDOS
-  if (dir != NULL) {
-    sprintf(path, "%s\\%s", dir, filename);
-    filename = path;
-  }
-  if ((f = fopen(filename, "rb")) == NULL) {
+  if (size < CTY_FILE_SIZE) {
     return 0;
   }
-#else
-  if (dir != NULL) {
-    sprintf(path, "%s/%s", dir, filename);
-    filename = path;
-  }
-  if ((f = fopen(filename, "r")) == NULL) {
-    return (0);
-  }
-#endif
 
-  fseek(f, 0L, SEEK_END);
-  size = ftell(f);
-  fseek(f, 0L, SEEK_SET);
+#define RD(arr, len) do { \
+    memcpy((arr), p, (len) * sizeof(short)); \
+    SWAP_SHORTS((short *)(arr), (len)); \
+    p += (len) * sizeof(short); \
+  } while (0)
 
-  switch (size) {
-  case 27120: /* Normal city */
-    break;
+  RD(ResHis,       HISTLEN / 2);
+  RD(ComHis,       HISTLEN / 2);
+  RD(IndHis,       HISTLEN / 2);
+  RD(CrimeHis,     HISTLEN / 2);
+  RD(PollutionHis, HISTLEN / 2);
+  RD(MoneyHis,     HISTLEN / 2);
+  RD(MiscHis,      MISCHISTLEN / 2);
+  RD(&Map[0][0],   WORLD_X * WORLD_Y);
 
-  case 99120: /* 2x2 city */
-    break;
-
-  case 219120: /* 3x3 city */
-    break;
-
-  default:
-    return (0);
-  }
-
-  if ((_load_short(ResHis, HISTLEN / 2, f) == 0) ||
-      (_load_short(ComHis, HISTLEN / 2, f) == 0) ||
-      (_load_short(IndHis, HISTLEN / 2, f) == 0) ||
-      (_load_short(CrimeHis, HISTLEN / 2, f) == 0) ||
-      (_load_short(PollutionHis, HISTLEN / 2, f) == 0) ||
-      (_load_short(MoneyHis, HISTLEN / 2, f) == 0) ||
-      (_load_short(MiscHis, MISCHISTLEN / 2, f) == 0) ||
-      (_load_short((&Map[0][0]), WORLD_X * WORLD_Y, f) == 0)) {
-
-    /* TODO:  report error */
-    fclose(f);
-    return(0);
-  }
-
-  fclose(f);
-  return(1);
+#undef RD
+  return 1;
 }
-
-
-static int _load_mem(const unsigned char *src, QUAD size);	/* defined below */
 
 /* Shared tail of loadFile/loadMem: unpack funds/date/flags from MiscHis and
  * kick the engine.  The raw map+history arrays are already populated. */
@@ -264,10 +177,57 @@ _finish_load(void)
 
 int loadFile(char *filename)
 {
-  if (_load_file(filename, NULL) == 0)
-    return (0);
+  if (!filename) return 0;
+  uint32_t size = 0;
+  uint8_t *data = platform_load_data(filename, &size);
+  bool free_data = false;
+
+  if (!data || size < CTY_FILE_SIZE) {
+    FILE *f = fopen(filename, "rb");
+    if (f) {
+      fseek(f, 0L, SEEK_END);
+      long fsize = ftell(f);
+      fseek(f, 0L, SEEK_SET);
+      if (fsize >= CTY_FILE_SIZE) {
+        uint8_t *buf = (uint8_t *)malloc(fsize);
+        if (buf) {
+          if (fread(buf, 1, fsize, f) == (size_t)fsize) {
+            data = buf;
+            size = (uint32_t)fsize;
+            free_data = true;
+          } else {
+            free(buf);
+          }
+        }
+      }
+      fclose(f);
+    }
+  }
+
+  if (!data || size < CTY_FILE_SIZE) {
+    if (free_data && data) free(data);
+    return 0;
+  }
+
+  if (_load_mem(data, size) == 0) {
+    if (free_data && data) free(data);
+    return 0;
+  }
   _finish_load();
-  return (1);
+
+  /* Check Tiny Engine metadata in MiscHis[64..] */
+  if (memcmp((const char *)(MiscHis + MISC_MAGIC_OFFSET), CTY_MAGIC, 8) == 0) {
+    const char *saved_name = (const char *)(MiscHis + MISC_NAME_OFFSET);
+    if (saved_name[0] != '\0') {
+      char clean_name[33];
+      strncpy(clean_name, saved_name, 32);
+      clean_name[32] = '\0';
+      setCityName(clean_name);
+    }
+  }
+
+  if (free_data && data) free(data);
+  return 1;
 }
 
 
@@ -275,30 +235,17 @@ int loadFile(char *filename)
 int loadMem(const unsigned char *buf, QUAD size)
 {
   if (_load_mem(buf, size) == 0)
-    return (0);
+    return 0;
   _finish_load();
-  return (1);
+  return 1;
 }
 
 
 int saveFile(char *filename)
 {
+  if (!filename) return 0;
+
   long l;
-  FILE *f;
-
-#ifdef MSDOS
-  if ((f = fopen(filename, "wb")) == NULL) {
-#else
-  if ((f = fopen(filename, "w")) == NULL) {
-#endif
-    /* TODO: report error */
-    return(0);
-  }
-
-  /* total funds is a long.....    MiscHis is array of ints */
-  /* total funds is bien put in the 50th & 51th word of MiscHis */
-  /* find the address, cast the ptr to a lontPtr, take contents */
-
   l = TotalFunds;
   HALF_SWAP_LONGS(&l, 1);
   (*(QUAD *)(MiscHis + 50)) = l;
@@ -312,9 +259,7 @@ int saveFile(char *filename)
   MiscHis[54] = autoGo;		/* flag for autoGo */
   MiscHis[55] = UserSoundOn;	/* flag for the sound on/off */
   MiscHis[57] = SimSpeed;
-  MiscHis[56] = CityTax;	/* post release */
-
-  /* yayaya */
+  MiscHis[56] = CityTax;
 
   l = (int)(policePercent * 65536);
   HALF_SWAP_LONGS(&l, 1);
@@ -328,60 +273,52 @@ int saveFile(char *filename)
   HALF_SWAP_LONGS(&l, 1);
   (*(QUAD *)(MiscHis + 62)) = l;
 
-  if ((_save_short(ResHis, HISTLEN / 2, f) == 0) ||
-      (_save_short(ComHis, HISTLEN / 2, f) == 0) ||
-      (_save_short(IndHis, HISTLEN / 2, f) == 0) ||
-      (_save_short(CrimeHis, HISTLEN / 2, f) == 0) ||
-      (_save_short(PollutionHis, HISTLEN / 2, f) == 0) ||
-      (_save_short(MoneyHis, HISTLEN / 2, f) == 0) ||
-      (_save_short(MiscHis, MISCHISTLEN / 2, f) == 0) ||
-      (_save_short((&Map[0][0]), WORLD_X * WORLD_Y, f) < 0)) {
-
-    /* TODO:  report error */
-    fclose(f);
-    return(0);
+  /* Store Tiny Engine City Name in unused MiscHis space (indices 64..119) */
+  memcpy((char *)(MiscHis + MISC_MAGIC_OFFSET), CTY_MAGIC, 8);
+  memset((char *)(MiscHis + MISC_NAME_OFFSET), 0, 32);
+  if (CityName && CityName[0]) {
+    strncpy((char *)(MiscHis + MISC_NAME_OFFSET), CityName, 31);
+  } else {
+    strncpy((char *)(MiscHis + MISC_NAME_OFFSET), "Metropolis", 31);
   }
 
-  fclose(f);
-  return(1);
-}
+  unsigned char buf[CTY_FILE_SIZE];
+  memset(buf, 0, sizeof(buf));
+  unsigned char *p = buf;
 
-
-/* Load a city straight from an embedded resource blob (res_data.h): the
- * baked-in scenarios (snro.*) and example cities (cities/...cty).  Reads the
- * same fixed-length field prefix as _load_file (histories + WORLD_X*WORLD_Y
- * map), accepting the same three city sizes -- just from memory. */
-static int
-_load_mem(const unsigned char *src, QUAD size)
-{
-  const unsigned char *p = src;
-
-  switch (size) {
-  case 27120:	/* normal city */
-  case 99120:	/* 2x2 city    */
-  case 219120:	/* 3x3 city    */
-    break;
-  default:
-    return 0;
-  }
-
-#define RD(arr, len) do { \
-    memcpy((arr), p, (len) * sizeof(short)); \
-    SWAP_SHORTS((short *)(arr), (len)); \
+#define WR(arr, len) do { \
+    memcpy(p, (arr), (len) * sizeof(short)); \
+    SWAP_SHORTS((short *)p, (len)); \
     p += (len) * sizeof(short); \
   } while (0)
 
-  RD(ResHis,       HISTLEN / 2);
-  RD(ComHis,       HISTLEN / 2);
-  RD(IndHis,       HISTLEN / 2);
-  RD(CrimeHis,     HISTLEN / 2);
-  RD(PollutionHis, HISTLEN / 2);
-  RD(MoneyHis,     HISTLEN / 2);
-  RD(MiscHis,      MISCHISTLEN / 2);
-  RD(&Map[0][0],   WORLD_X * WORLD_Y);
+  WR(ResHis,       HISTLEN / 2);
+  WR(ComHis,       HISTLEN / 2);
+  WR(IndHis,       HISTLEN / 2);
+  WR(CrimeHis,     HISTLEN / 2);
+  WR(PollutionHis, HISTLEN / 2);
+  WR(MoneyHis,     HISTLEN / 2);
+  WR(MiscHis,      MISCHISTLEN / 2);
+  WR(&Map[0][0],   WORLD_X * WORLD_Y);
 
-#undef RD
-  return 1;
+#undef WR
+
+  /* 1. Try platform_save_data */
+  if (platform_save_data(filename, buf, CTY_FILE_SIZE)) {
+    return 1;
+  }
+
+  /* 2. Fallback to direct fopen for desktop */
+  FILE *f = fopen(filename, "wb");
+  if (f) {
+    size_t written = fwrite(buf, 1, CTY_FILE_SIZE, f);
+    fclose(f);
+    if (written == CTY_FILE_SIZE) {
+      return 1;
+    }
+  }
+
+  return 0;
 }
 
 
@@ -498,25 +435,28 @@ int LoadCity(char *filename)
   char *cp;
   char msg[256];
 
+  if (!filename) return 0;
+
   if (loadFile(filename)) {
     if (CityFileName != NULL)
       ckfree(CityFileName);
     CityFileName = (char *)ckalloc(strlen(filename) + 1);
     strcpy(CityFileName, filename);
 
-    if ((cp = strrchr(filename, '.')))
-      *cp = 0;
-#ifdef MSDOS
-    if ((cp = strrchr(filename, '\\')))
-#else
-    if ((cp = strrchr(filename, '/')))
-#endif
-      cp++;
-    else
-      cp = filename;
-    filename = (char *)ckalloc(strlen(cp) + 1);
-    strcpy(filename, cp);
-    setCityName(filename);
+    if (!CityName || !CityName[0]) {
+      char tmp[128];
+      strncpy(tmp, filename, sizeof(tmp) - 1);
+      tmp[sizeof(tmp) - 1] = '\0';
+      if ((cp = strrchr(tmp, '.')))
+        *cp = 0;
+      if ((cp = strrchr(tmp, '/')))
+        cp++;
+      else if ((cp = strrchr(tmp, '\\')))
+        cp++;
+      else
+        cp = tmp;
+      setCityName(cp);
+    }
     gettimeofday(&start_time, NULL);
 
     InvalidateMaps();
@@ -524,9 +464,7 @@ int LoadCity(char *filename)
     DidLoadCity();
     return (1);
   } else {
-    sprintf(msg, "Unable to load a city from the file named \"%s\". %s",
-	    filename ? filename : "(null)",
-	    errno ? strerror(errno) : "");
+    sprintf(msg, "Unable to load city from \"%s\".", filename ? filename : "(null)");
     DidntLoadCity(msg);
     return (0);
   }
@@ -595,15 +533,14 @@ SaveCity(void)
   char msg[256];
 
   if (CityFileName == NULL) {
-    DoSaveCityAs();
+    return SaveCityAs("city_slot1.cty");
   } else {
     if (saveFile(CityFileName)) {
       DidSaveCity();
-      return (1);			/* ncurses port: report success */
+      return (1);
     } else {
-      sprintf(msg, "Unable to save the city to the file named \"%s\". %s",
-	      CityFileName ? CityFileName : "(null)",
-	      errno ? strerror(errno) : "");
+      sprintf(msg, "Unable to save city to \"%s\".",
+	      CityFileName ? CityFileName : "(null)");
       DidntSaveCity(msg);
     }
   }
@@ -638,36 +575,135 @@ int
 SaveCityAs(char *filename)
 {
   char msg[256];
-  char *cp;
 
+  if (!filename) return 0;
   if (CityFileName != NULL)
     ckfree(CityFileName);
   CityFileName = (char *)ckalloc(strlen(filename) + 1);
   strcpy(CityFileName, filename);
 
   if (saveFile(CityFileName)) {
-    if ((cp = strrchr(filename, '.')))
-      *cp = 0;
-#ifdef MSDOS
-    if ((cp = strrchr(filename, '\\')))
-#else
-    if ((cp = strrchr(filename, '/')))
-#endif
-      cp++;
-    else
-      cp = filename;
-    filename = (char *)ckalloc(strlen(cp) + 1);
-    strcpy(filename, cp);
-    setCityName(cp);
     DidSaveCity();
-    return (1);				/* ncurses port: report success */
+    return (1);
   } else {
-    sprintf(msg, "Unable to save the city to the file named \"%s\". %s",
-	    CityFileName ? CityFileName : "(null)",
-	    errno ? strerror(errno) : "");
+    sprintf(msg, "Unable to save city to \"%s\".",
+	    CityFileName ? CityFileName : "(null)");
     DidntSaveCity(msg);
   }
   return (0);
+}
+
+
+int city_read_meta(const char *filename, city_meta_t *meta)
+{
+  if (!filename || !meta) return 0;
+  memset(meta, 0, sizeof(city_meta_t));
+
+  uint32_t size = 0;
+  uint8_t *data = platform_load_data(filename, &size);
+  bool free_data = false;
+
+  if (!data || size < CTY_FILE_SIZE) {
+    FILE *f = fopen(filename, "rb");
+    if (f) {
+      fseek(f, 0L, SEEK_END);
+      long fsize = ftell(f);
+      fseek(f, 0L, SEEK_SET);
+      if (fsize >= CTY_FILE_SIZE) {
+        uint8_t *buf = (uint8_t *)malloc(fsize);
+        if (buf) {
+          if (fread(buf, 1, fsize, f) == (size_t)fsize) {
+            data = buf;
+            size = (uint32_t)fsize;
+            free_data = true;
+          } else {
+            free(buf);
+          }
+        }
+      }
+      fclose(f);
+    }
+  }
+
+  if (!data || size < CTY_FILE_SIZE) {
+    if (free_data && data) free(data);
+    meta->exists = 0;
+    return 0;
+  }
+
+  meta->exists = 1;
+
+  /* MiscHis is located at offset: 6 * (HISTLEN / 2) * sizeof(short) = 2880 bytes */
+  short misc[MISCHISTLEN / 2];
+  memcpy(misc, data + (6 * (HISTLEN / 2) * sizeof(short)), sizeof(misc));
+  SWAP_SHORTS(misc, MISCHISTLEN / 2);
+
+  long funds = *(const QUAD *)(misc + 50);
+  HALF_SWAP_LONGS(&funds, 1);
+  meta->funds = funds;
+
+  long time = *(const QUAD *)(misc + 8);
+  HALF_SWAP_LONGS(&time, 1);
+  meta->year = 1900 + (int)(time / 48);
+  meta->month = (int)((time % 48) / 4);
+
+  short res_pop = misc[2];
+  short com_pop = misc[3];
+  short ind_pop = misc[4];
+  meta->population = (res_pop + com_pop + ind_pop) * 100;
+  meta->difficulty = misc[15];
+  meta->score = misc[17];
+
+  /* Check for Tiny Engine City Name in MiscHis[64..] */
+  if (memcmp((const char *)(misc + MISC_MAGIC_OFFSET), CTY_MAGIC, 8) == 0) {
+    const char *saved_name = (const char *)(misc + MISC_NAME_OFFSET);
+    if (saved_name[0] != '\0') {
+      strncpy(meta->name, saved_name, sizeof(meta->name) - 1);
+      meta->name[sizeof(meta->name) - 1] = '\0';
+      if (free_data) free(data);
+      return 1;
+    }
+  }
+
+  /* Default name from file basename */
+  const char *base = strrchr(filename, '/');
+  if (!base) base = strrchr(filename, '\\');
+  base = base ? base + 1 : filename;
+  strncpy(meta->name, base, sizeof(meta->name) - 1);
+  meta->name[sizeof(meta->name) - 1] = '\0';
+  char *dot = strrchr(meta->name, '.');
+  if (dot) *dot = '\0';
+
+  if (free_data) free(data);
+  return 1;
+}
+
+int city_get_slot_path(int slot, char *out_path, size_t max_len)
+{
+  if (slot < 1 || slot > CITY_MAX_SLOTS || !out_path) return 0;
+  snprintf(out_path, max_len, "city_slot%d.cty", slot);
+  return 1;
+}
+
+int city_save_slot(int slot)
+{
+  char path[64];
+  if (!city_get_slot_path(slot, path, sizeof(path))) return 0;
+  return SaveCityAs(path);
+}
+
+int city_load_slot(int slot)
+{
+  char path[64];
+  if (!city_get_slot_path(slot, path, sizeof(path))) return 0;
+  return LoadCity(path);
+}
+
+int city_get_slot_meta(int slot, city_meta_t *meta)
+{
+  char path[64];
+  if (!city_get_slot_path(slot, path, sizeof(path))) return 0;
+  return city_read_meta(path, meta);
 }
 
 

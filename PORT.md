@@ -190,11 +190,11 @@ flowchart TD
 
 ### Phase 6: Filesystem & Save Data
 
-- [ ] **Task 6.1: Embedded Data & Scenario Management**
+- [x] **Task 6.1: Embedded Data & Scenario Management**
   - Retain embedded scenario files (`snro.111` through `snro.888`) and string tables (`stri.*`) in [`headers/res_data.h`](file:///home/iceman/Developer/games/tiny/projects/micropolis/reference/vtcity/src/headers/res_data.h) to eliminate disk dependency for built-in scenarios.
   - Optimize memory footprint: evaluate lazy loading or asset-streaming on memory-constrained devices.
 
-- [ ] **Task 6.2: City Persistence & File I/O (`s_fileio.c`)**
+- [x] **Task 6.2: City Persistence & File I/O (`s_fileio.c`)**
   - Replace low-level POSIX file I/O (`open`, `read`, `write`) with Tiny Engine's cross-platform persistence (`platform_save_data()` and `platform_load_data()`).
   - Maintain binary compatibility with classic SimCity `.cty` format (27,120 bytes):
     - `Map[120][100]` tile array (24,000 bytes).

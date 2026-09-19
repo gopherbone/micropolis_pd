@@ -389,13 +389,12 @@ void sim_render_query_card(const sim_query_info_t *info, vec2i_t screen_center)
     int h = 120;
     vec2i_t pos = vec2i(screen_center.x - w / 2, screen_center.y - h / 2);
 
-    /* Background panel */
-    render_fill_rect(pos, vec2i(w, h), rgba(18, 20, 32, 240));
-    render_draw_rect(pos, vec2i(w, h), rgba(100, 110, 140, 255));
-    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba(60, 70, 95, 255));
+    /* Background panel: solid black with white double border */
+    render_fill_rect(pos, vec2i(w, h), rgba_black());
+    render_draw_rect(pos, vec2i(w, h), rgba_white());
+    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba_white());
+    render_draw_line(vec2i(pos.x + 2, pos.y + 20), vec2i(pos.x + w - 3, pos.y + 20), rgba_white());
 
-    /* Title header */
-    render_fill_rect(vec2i(pos.x + 3, pos.y + 3), vec2i(w - 6, 16), rgba(35, 45, 70, 255));
     if (s_hud_font) {
         font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 5), "ZONE QUERY", FONT_ALIGN_CENTER, rgba(255, 215, 60, 255));
 
@@ -436,13 +435,12 @@ void sim_render_budget_modal(const sim_budget_modal_t *budget, vec2i_t screen_ce
     int h = 180;
     vec2i_t pos = vec2i(screen_center.x - w / 2, screen_center.y - h / 2);
 
-    /* Background panel */
-    render_fill_rect(pos, vec2i(w, h), rgba(15, 18, 28, 245));
-    render_draw_rect(pos, vec2i(w, h), rgba(120, 130, 160, 255));
-    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba(70, 80, 110, 255));
+    /* Background panel: solid black with white double border */
+    render_fill_rect(pos, vec2i(w, h), rgba_black());
+    render_draw_rect(pos, vec2i(w, h), rgba_white());
+    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba_white());
+    render_draw_line(vec2i(pos.x + 2, pos.y + 22), vec2i(pos.x + w - 3, pos.y + 22), rgba_white());
 
-    /* Title header */
-    render_fill_rect(vec2i(pos.x + 3, pos.y + 3), vec2i(w - 6, 18), rgba(40, 50, 80, 255));
     if (s_hud_font) {
         font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 5), "CITY BUDGET & TAXES", FONT_ALIGN_CENTER, rgba(255, 215, 60, 255));
 
@@ -456,7 +454,7 @@ void sim_render_budget_modal(const sim_budget_modal_t *budget, vec2i_t screen_ce
             bool sel = (budget->selected_item == i);
 
             if (sel) {
-                render_fill_rect(vec2i(pos.x + 6, row_y - 2), vec2i(w - 12, 16), rgba(50, 60, 90, 200));
+                render_draw_rect(vec2i(pos.x + 6, row_y - 2), vec2i(w - 12, 16), rgba_white());
             }
 
             char item_buf[64];
@@ -478,7 +476,7 @@ void sim_render_budget_modal(const sim_budget_modal_t *budget, vec2i_t screen_ce
         }
 
         /* Divider */
-        render_draw_line(vec2i(pos.x + 10, pos.y + 115), vec2i(pos.x + w - 10, pos.y + 115), rgba(80, 90, 120, 255));
+        render_draw_line(vec2i(pos.x + 10, pos.y + 115), vec2i(pos.x + w - 10, pos.y + 115), rgba_white());
 
         /* Summary Stats */
         long total_expense = budget->road_cost + budget->police_cost + budget->fire_cost;
@@ -495,12 +493,12 @@ void sim_render_budget_modal(const sim_budget_modal_t *budget, vec2i_t screen_ce
 
         /* Continue Button (Item 4) */
         bool btn_sel = (budget->selected_item == 4);
-        render_fill_rect(vec2i(pos.x + 35, pos.y + 144), vec2i(w - 70, 18), btn_sel ? rgba(70, 120, 60, 255) : rgba(35, 50, 40, 200));
-        render_draw_rect(vec2i(pos.x + 35, pos.y + 144), vec2i(w - 70, 18), btn_sel ? rgba(150, 255, 120, 255) : rgba(60, 100, 70, 255));
-        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 147), "[ CONTINUE ]", FONT_ALIGN_CENTER, btn_sel ? rgba_white() : rgba(180, 210, 180, 255));
+        render_fill_rect(vec2i(pos.x + 35, pos.y + 144), vec2i(w - 70, 18), btn_sel ? rgba_white() : rgba_black());
+        render_draw_rect(vec2i(pos.x + 35, pos.y + 144), vec2i(w - 70, 18), rgba_white());
+        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 147), "[ CONTINUE ]", FONT_ALIGN_CENTER, btn_sel ? rgba_black() : rgba_white());
 
         /* Controls Hint */
-        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 167), "Up/Down: Select | Left/Right: Adjust | (A): Done", FONT_ALIGN_CENTER, rgba(140, 150, 170, 255));
+        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 167), "Up/Down: Select | Left/Right: Adjust | (A): Done", FONT_ALIGN_CENTER, rgba(180, 190, 200, 255));
     }
 }
 
@@ -512,13 +510,12 @@ void sim_render_eval_modal(const sim_eval_modal_t *eval_data, vec2i_t screen_cen
     int h = 180;
     vec2i_t pos = vec2i(screen_center.x - w / 2, screen_center.y - h / 2);
 
-    /* Background panel */
-    render_fill_rect(pos, vec2i(w, h), rgba(15, 18, 28, 245));
-    render_draw_rect(pos, vec2i(w, h), rgba(120, 130, 160, 255));
-    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba(70, 80, 110, 255));
+    /* Background panel: solid black with white double border */
+    render_fill_rect(pos, vec2i(w, h), rgba_black());
+    render_draw_rect(pos, vec2i(w, h), rgba_white());
+    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba_white());
+    render_draw_line(vec2i(pos.x + 2, pos.y + 22), vec2i(pos.x + w - 3, pos.y + 22), rgba_white());
 
-    /* Title header */
-    render_fill_rect(vec2i(pos.x + 3, pos.y + 3), vec2i(w - 6, 18), rgba(40, 50, 80, 255));
     if (s_hud_font) {
         font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 5), "CITY EVALUATION", FONT_ALIGN_CENTER, rgba(255, 215, 60, 255));
 
@@ -539,7 +536,7 @@ void sim_render_eval_modal(const sim_eval_modal_t *eval_data, vec2i_t screen_cen
         font_draw_bmfont(s_hud_font, vec2i(pos.x + 12, pos.y + 76), buf, FONT_ALIGN_LEFT, rgba(200, 200, 220, 255));
 
         /* Divider */
-        render_draw_line(vec2i(pos.x + 10, pos.y + 94), vec2i(pos.x + w - 10, pos.y + 94), rgba(80, 90, 120, 255));
+        render_draw_line(vec2i(pos.x + 10, pos.y + 94), vec2i(pos.x + w - 10, pos.y + 94), rgba_white());
 
         font_draw_bmfont(s_hud_font, vec2i(pos.x + 12, pos.y + 100), "Top Public Complaints:", FONT_ALIGN_LEFT, rgba(255, 180, 60, 255));
 
@@ -557,7 +554,7 @@ void sim_render_eval_modal(const sim_eval_modal_t *eval_data, vec2i_t screen_cen
             font_draw_bmfont(s_hud_font, vec2i(col_x, row_y), buf, FONT_ALIGN_LEFT, rgba(210, 210, 220, 255));
         }
 
-        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 158), "[ Press (B) to close ]", FONT_ALIGN_CENTER, rgba(140, 150, 170, 255));
+        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 158), "[ Press (B) to close ]", FONT_ALIGN_CENTER, rgba(160, 170, 190, 255));
     }
 }
 
@@ -570,13 +567,12 @@ void sim_render_menu_modal(const sim_menu_modal_t *menu, vec2i_t screen_center)
     int h = 40 + menu->item_count * item_h;
     vec2i_t pos = vec2i(screen_center.x - w / 2, screen_center.y - h / 2);
 
-    /* Background panel */
-    render_fill_rect(pos, vec2i(w, h), rgba(15, 18, 28, 245));
-    render_draw_rect(pos, vec2i(w, h), rgba(120, 130, 160, 255));
-    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba(70, 80, 110, 255));
+    /* Background panel: solid black with white double border */
+    render_fill_rect(pos, vec2i(w, h), rgba_black());
+    render_draw_rect(pos, vec2i(w, h), rgba_white());
+    render_draw_rect(vec2i(pos.x + 2, pos.y + 2), vec2i(w - 4, h - 4), rgba_white());
+    render_draw_line(vec2i(pos.x + 2, pos.y + 22), vec2i(pos.x + w - 3, pos.y + 22), rgba_white());
 
-    /* Title header */
-    render_fill_rect(vec2i(pos.x + 3, pos.y + 3), vec2i(w - 6, 18), rgba(40, 50, 80, 255));
     if (s_hud_font) {
         font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + 5), menu->title ? menu->title : "MENU", FONT_ALIGN_CENTER, rgba(255, 215, 60, 255));
 
@@ -585,7 +581,7 @@ void sim_render_menu_modal(const sim_menu_modal_t *menu, vec2i_t screen_center)
             bool sel = (menu->selected_index == i);
 
             if (sel) {
-                render_fill_rect(vec2i(pos.x + 6, row_y - 1), vec2i(w - 12, item_h), rgba(60, 70, 100, 200));
+                render_draw_rect(vec2i(pos.x + 6, row_y - 1), vec2i(w - 12, item_h), rgba_white());
             }
 
             char buf[64];
@@ -593,7 +589,7 @@ void sim_render_menu_modal(const sim_menu_modal_t *menu, vec2i_t screen_center)
             font_draw_bmfont(s_hud_font, vec2i(pos.x + 10, row_y), buf, FONT_ALIGN_LEFT, sel ? rgba(255, 240, 100, 255) : rgba_white());
         }
 
-        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + h - 14), "Up/Down: Move | (A): Select | (B): Cancel", FONT_ALIGN_CENTER, rgba(140, 150, 170, 255));
+        font_draw_bmfont(s_hud_font, vec2i(screen_center.x, pos.y + h - 14), "Up/Down: Move | (A): Select | (B): Cancel", FONT_ALIGN_CENTER, rgba(160, 170, 190, 255));
     }
 }
 
@@ -609,9 +605,8 @@ void sim_render_toast(const char *msg, float alpha, vec2i_t screen_size)
     int x = (screen_size.x - box_w) / 2;
     int y = screen_size.y - 42;
 
-    uint8_t a = (uint8_t)(alpha * 240.0f);
-    render_fill_rect(vec2i(x, y), vec2i(box_w, box_h), rgba(20, 22, 35, a));
-    render_draw_rect(vec2i(x, y), vec2i(box_w, box_h), rgba(120, 130, 160, a));
+    render_fill_rect(vec2i(x, y), vec2i(box_w, box_h), rgba_black());
+    render_draw_rect(vec2i(x, y), vec2i(box_w, box_h), rgba_white());
     font_draw_bmfont(s_hud_font, vec2i(x + pad_x, y + pad_y), msg, FONT_ALIGN_LEFT, rgba(255, 230, 100, (uint8_t)(alpha * 255.0f)));
 }
 
