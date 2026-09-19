@@ -1,0 +1,7 @@
+name=micropolis
+author=Developer
+description=A game project created with Tiny Game Engine
+bundleID=com.developer.micropolis
+version=1.0.0
+buildNumber=1
+imagePath=

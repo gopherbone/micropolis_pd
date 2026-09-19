@@ -1,0 +1,8 @@
+build*
+reference
+*.zip
+*.pdx
+*.so
+*.elf
+Source/pdex.*
+
