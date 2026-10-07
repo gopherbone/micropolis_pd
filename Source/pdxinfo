@@ -1,6 +1,6 @@
 name=Micropolis
 author=icedman
-description=SimCity Classic (Micropolis) for Playdate
+description=A modified version of the Micropolis city simulator, rebuilt for Playdate. GPL v3.
 bundleID=com.developer.micropolis
 version=1.0.0
 buildNumber=1

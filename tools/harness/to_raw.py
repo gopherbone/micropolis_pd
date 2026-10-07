@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Mirror Source/**/*.png into <out>/**/*.raw (w h hasmask, then 0=black 1=white 2=clear)."""
 import os, sys
 from PIL import Image

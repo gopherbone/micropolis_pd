@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * State shared between the in-game map view (game.c) and its screens
  * (screens.c). Not part of the public game API.
@@ -59,6 +61,17 @@ typedef struct {
 } game_state_t;
 
 extern game_state_t G;
+
+/* Camera in whole screen pixels, snapped to even values. The tile art's
+ * dithers repeat every 2px, so moving in 2px steps keeps them stable on
+ * screen instead of flipping phase (shimmering) on odd-pixel moves. */
+static inline int cam_px(float v)
+{
+    int i = (int)(v < 0 ? v - 1.0f : v);
+    return i & ~1;
+}
+#define CAM_X() cam_px(G.cam_x)
+#define CAM_Y() cam_px(G.cam_y)
 
 /* --- game.c services used by screens ------------------------------------ */
 int  game_tool_cost(int tool);

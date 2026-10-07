@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Hand-drawn pixel art for the Micropolis Playdate UI.
 
 '#' = black ink, '.' = transparent, 'o' = white (opaque) pixel.

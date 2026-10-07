@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * newlib syscall stubs for the Playdate device build. The game falls back to
  * stdio fopen() only when platform_load_data() fails, so these just report

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * Small immediate-mode UI kit for the 1-bit Playdate interface:
  * fonts, icons, panels, button hints, bars, text wrapping, sounds.

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 #ifndef TINY_RENDER_H
 #define TINY_RENDER_H
 

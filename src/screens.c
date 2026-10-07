@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * In-game screens: build sheet, budget, city report, city map, menus,
  * inspect card and event notices.
@@ -646,8 +648,8 @@ void citymap_open(map_layer_t layer)
     s_map_jump = false;
     s_map_refresh = true;
     int z = G.zoom;
-    s_jump_x = ((int)G.cam_x + SCREEN_W / 2) / z;
-    s_jump_y = ((int)G.cam_y + SCREEN_H / 2) / z;
+    s_jump_x = (CAM_X() + SCREEN_W / 2) / z;
+    s_jump_y = (CAM_Y() + SCREEN_H / 2) / z;
     G.mode = MODE_MAP;
     ui_sound(UI_SND_SELECT);
 }
@@ -712,8 +714,8 @@ void citymap_draw(void)
         cx = s_jump_x;
         cy = s_jump_y;
     } else {
-        cx = ((int)G.cam_x + SCREEN_W / 2) / z;
-        cy = ((int)G.cam_y + SCREEN_H / 2) / z;
+        cx = (CAM_X() + SCREEN_W / 2) / z;
+        cy = (CAM_Y() + SCREEN_H / 2) / z;
     }
     int fx = cx - vw / 2, fy = cy - vh / 2;
     if (fx < 0) fx = 0;
@@ -1057,7 +1059,7 @@ void query_draw(void)
 {
     const int w = 176, h = 150;
     /* Opposite side of the screen from the cursor */
-    int cursor_sx = G.cur_x * G.zoom - (int)G.cam_x;
+    int cursor_sx = G.cur_x * G.zoom - CAM_X();
     int x = cursor_sx < SCREEN_W / 2 ? SCREEN_W - w - 8 : 8;
     int y = TOP_BAR_H + 8;
     ui_panel(x, y, w, h);

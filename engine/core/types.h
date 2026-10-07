@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * Minimal Tiny Engine compatible types for the Micropolis Playdate build.
  * This is a from-scratch shim covering only the API surface the game uses.

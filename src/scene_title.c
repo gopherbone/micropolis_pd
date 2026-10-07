@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * Title scene: menu card over a slowly drifting aerial view of a city,
  * plus New City (terrain preview), Load, Scenarios and About pages.
@@ -362,6 +364,10 @@ static void draw_backdrop(void)
     if (cx < 0) cx = 0;
     if (cx > CITY_W * 8 - SCREEN_W) cx = CITY_W * 8 - SCREEN_W;
     int cy = (int)drift_axis(s_by0, s_by1, SCREEN_H, CITY_H * 8, sinf(t * 0.08f + 1.0f));
+    /* Move in 2px steps: the tiles' dithers repeat every 2px, so odd-pixel
+     * steps would make every patterned area flicker as the city drifts */
+    cx &= ~1;
+    cy &= ~1;
     mapview_draw(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
     mapview_draw_sprites(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
 
@@ -479,7 +485,6 @@ static void draw_new(void)
 static void draw_load(void)
 {
     draw_backdrop();
-    ui_dim(0, 0, SCREEN_W, SCREEN_H);
     const int w = 300, h = 160, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
     ui_panel(x, y, w, h);
     ui_text(UI_FONT_BOLD, x + 12, y + 8, "Load City", FONT_ALIGN_LEFT, UI_BLACK);
@@ -510,7 +515,6 @@ static void draw_load(void)
 static void draw_scenarios(void)
 {
     draw_backdrop();
-    ui_dim(0, 0, SCREEN_W, SCREEN_H);
     const int x = 8, y = 8, w = SCREEN_W - 16, h = SCREEN_H - 16;
     ui_panel(x, y, w, h);
     ui_text(UI_FONT_BOLD, x + 12, y + 8, "Scenarios", FONT_ALIGN_LEFT, UI_BLACK);
@@ -530,7 +534,6 @@ static void draw_scenarios(void)
 static void draw_demos(void)
 {
     draw_backdrop();
-    ui_dim(0, 0, SCREEN_W, SCREEN_H);
     int n = game_demo_count();
     const int w = 240, h = 30 + n * 19 + 28, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
     ui_panel(x, y, w, h);
@@ -545,18 +548,22 @@ static void draw_demos(void)
 static void draw_about(void)
 {
     draw_backdrop();
-    ui_dim(0, 0, SCREEN_W, SCREEN_H);
-    const int w = 320, h = 180, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
+    const int w = 372, h = 226, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
     ui_panel(x, y, w, h);
     draw_logo(x + 14, y + 10);
     ui_hline(x + 8, y + 50, w - 16, UI_BLACK);
-    int ty = y + 58;
-    ui_text_wrap(UI_FONT_LIGHT, x + 14, ty, w - 28,
-                 "Micropolis is the open-source release of SimCity Classic, "
-                 "designed by Will Wright at Maxis and released under the GPL "
-                 "by Electronic Arts and Don Hopkins.", UI_BLACK, 5);
-    ui_text_wrap(UI_FONT_LIGHT, x + 14, ty + 62, w - 28,
-                 "Tiny Engine port by icedman. Fonts: Nontendo by Shaun Inman.", UI_BLACK, 3);
+    int ty = y + 56, tw = w - 28;
+    ty += ui_text_wrap(UI_FONT_LIGHT, x + 14, ty, tw,
+                       "A modified version of Micropolis, the city simulator Will Wright "
+                       "designed at Maxis. Copyright 1989-2007 Electronic Arts, free "
+                       "software under the GNU GPL v3. Not the original program, and not "
+                       "affiliated with Electronic Arts.", UI_BLACK, 5) + 5;
+    ty += ui_text_wrap(UI_FONT_LIGHT, x + 14, ty, tw,
+                       "Micropolis is a registered trademark of Micropolis GmbH, licensed "
+                       "here as a courtesy of the owner.", UI_BLACK, 2) + 5;
+    ui_text_wrap(UI_FONT_LIGHT, x + 14, ty, tw,
+                 "Ports: vtcity by tenox7, tiny_micropolis by icedman, micropolis_pd. "
+                 "Font: Nontendo by Shaun Inman.", UI_BLACK, 2);
     ui_hints(x + w - 8, y + h - 20, NULL, "Back", UI_BLACK);
 }
 

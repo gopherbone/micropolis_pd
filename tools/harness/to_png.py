@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Convert harness .pgm screenshots to 2x PNGs."""
 import glob, os, sys
 from PIL import Image

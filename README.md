@@ -1,12 +1,14 @@
 # Micropolis for Playdate
 
-The classic city simulator, rebuilt for the [Playdate](https://play.date): the full Micropolis (SimCity Classic) simulation with an interface designed around the D-pad, two buttons and the crank.
+The classic city simulator, rebuilt for the [Playdate](https://play.date): the full Micropolis simulation with an interface designed around the D-pad, two buttons and the crank.
+
+*This is a modified version of Micropolis, not the original program (see [NOTICE.md](NOTICE.md)). Micropolis is a registered trademark of Micropolis Corporation (Micropolis GmbH) and is licensed here as a courtesy of the owner ([micropolis.com](https://micropolis.com)).*
 
 ![Detroit at near zoom: a dense grid of homes, shops and civic buildings under a status bar showing funds, date, population, R/C/I demand and speed](docs/screenshots/city.png)
 
 ## What it is
 
-[Micropolis](https://github.com/SimHacker/micropolis) is the open-source release of the original SimCity. This project takes [icedman's Tiny Engine port](https://github.com/icedman/tiny_micropolis) of that simulation and gives it a Playdate-native interface:
+[Micropolis](https://github.com/SimHacker/micropolis) is the open-source release of the city simulator Will Wright designed at Maxis in 1989. This project takes [icedman's Tiny Engine port](https://github.com/icedman/tiny_micropolis) of that simulation and gives it a Playdate-native interface:
 
 - **The whole simulation.** Zoning, power grids, traffic, pollution, crime, land value, budgets, disasters, public opinion, and all eight historical scenarios.
 - **Nine demo cities.** Classic Micropolis example maps like Haight, Kyoto, Kowloon and Yokohama, ready to explore, and rotating behind the title menu.
@@ -98,8 +100,8 @@ Screenshots go to `tools/harness/out/`. Scripts are plain text: `tap a`, `hold r
 
 ## Credits
 
-- **SimCity** was designed by Will Wright and published by Maxis in 1989.
-- **Micropolis** is the GPL release of SimCity's source by Electronic Arts, made possible by Don Hopkins.
+- **The original game** was designed by Will Wright and published by Maxis in 1989.
+- **Micropolis** is the GPL release of that game's Unix source by Electronic Arts for the One Laptop Per Child program, made possible by Don Hopkins.
 - **[vtcity](https://github.com/tenox7/vtcity)** by tenox7 is the streamlined Unix C version this port started from.
 - **[tiny_micropolis](https://github.com/icedman/tiny_micropolis)** by icedman is the Tiny Engine port of the simulation, which this project builds on.
 - **Fonts and button glyphs** come from the Playdate SDK by Panic: Nontendo (by Shaun Inman), plus symbols from Pedallica, Newsleak Serif and Bitmore, and the system button glyphs from Asheville Sans.
@@ -121,4 +123,11 @@ The simulation in `src/micropolis/` is the original Micropolis code as ported by
 
 ## License
 
-Micropolis is free software released under the [GNU General Public License v3](https://www.gnu.org/licenses/gpl-3.0.html), and this fork is distributed under the same terms. SimCity is a trademark of Electronic Arts. This project is not affiliated with or endorsed by Electronic Arts, Maxis or Panic.
+This is a **modified version** of Micropolis, distributed under the [GNU General Public License v3](COPYING) (or any later version), with Electronic Arts' additional terms under GPL section 7.
+
+- [NOTICE.md](NOTICE.md) has the original copyright notice and terms, where each part of the code comes from, and what this fork changed.
+- Each file in `src/micropolis/` carries the original notice.
+
+The name "Micropolis" is used under the [Micropolis Public Name License](MicropolisPublicNameLicense.md): Micropolis is a registered trademark of Micropolis Corporation (Micropolis GmbH) and is licensed here as a courtesy of the owner.
+
+SimCity is a trademark of Electronic Arts; no rights to it are claimed. This project is not affiliated with or endorsed by Electronic Arts, Maxis, Micropolis GmbH or Panic.

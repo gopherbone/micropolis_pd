@@ -60,6 +60,12 @@
  * NOT APPLY TO YOU.
  */
 
+
+/* Modified version (GPL v3 section 5a / additional terms): this file is not
+ * the original Micropolis source. It was converted to C99 for vtcity by
+ * tenox7, adapted for Tiny Engine by icedman (tiny_micropolis), and changed
+ * further for the Playdate in 2026 by micropolis_pd. See NOTICE.md. */
+
 short aniTile[ 1024 ] = { 
     0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,
     16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31, 

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * In-game scene: simulation glue, the main map view (cursor, camera, zoom,
  * building), HUD, and dispatch to the modal screens in screens.c.
@@ -936,8 +938,8 @@ static void draw_cursor(void)
 {
     const tool_def_t *t = &g_tools[G.tool];
     int z = G.zoom;
-    int sx = G.cur_x * z - (int)G.cam_x;
-    int sy = G.cur_y * z - (int)G.cam_y;
+    int sx = G.cur_x * z - CAM_X();
+    int sy = G.cur_y * z - CAM_Y();
     int size = t->size * z;
     int phase = (int)(G.time * 20.0f);
     ui_marching_rect(sx - 1, sy - 1, size + 2, size + 2, phase);
@@ -953,8 +955,8 @@ static void draw_floaters(void)
     for (int i = 0; i < MAX_FLOATERS; i++) {
         floater_t *f = &s_floaters[i];
         if (f->t <= 0.0f) continue;
-        int sx = f->tx * z + z / 2 - (int)G.cam_x;
-        int sy = f->ty * z - (int)G.cam_y - 14 - (int)((0.9f - f->t) * 24.0f);
+        int sx = f->tx * z + z / 2 - CAM_X();
+        int sy = f->ty * z - CAM_Y() - 14 - (int)((0.9f - f->t) * 24.0f);
         int w = ui_text_width(UI_FONT_BOLD, f->text) + 6;
         ui_fill(sx - w / 2, sy - 1, w, 13, UI_BLACK);
         ui_text(UI_FONT_BOLD, sx, sy + 1, f->text, FONT_ALIGN_CENTER, UI_WHITE);
@@ -964,7 +966,7 @@ static void draw_floaters(void)
 void game_draw_world(void)
 {
     mapview_sync();
-    int cx = (int)G.cam_x, cy = (int)G.cam_y;
+    int cx = CAM_X(), cy = CAM_Y();
     ui_fill(0, 0, SCREEN_W, SCREEN_H, UI_BLACK);
     mapview_draw(G.zoom, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
     mapview_draw_sprites(G.zoom, cx, cy, 0, 0, SCREEN_W, SCREEN_H);

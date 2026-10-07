@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Generate Source/assets: 1-bit tiles and sprites, Nontendo fonts (+ symbols
 borrowed from other SDK fonts), UI icons, native button glyphs and UI sounds.
 Needs the Playdate SDK (PLAYDATE_SDK_PATH) for its fonts, and Pillow."""
@@ -173,13 +174,13 @@ def convert_font(name, out_name, extra, scale=1):
         f.write("\n".join(xml) + "\n")
 
 
-# Nontendo lacks $ + < > # & *. Borrow them from SDK fonts with matching metrics:
+# Nontendo lacks $ + < > # & * _. Borrow them from SDK fonts with matching metrics:
 #   bold  -> Pedallica (10px caps, 2px stems)
 #   light -> Newsleak Serif (1px stems); its & is serifed, so & comes from Bitmore
 NONTENDO_BOLD, _ = load_pd_font("Nontendo/Nontendo-Bold.fnt")
 NONTENDO_LIGHT, _ = load_pd_font("Nontendo/Nontendo-Light.fnt")
-BOLD_SYMBOLS = borrow([("Pedallica/font-pedallica.fnt", "$+<>#&*")], NONTENDO_BOLD)
-LIGHT_SYMBOLS = borrow([("Newsleak Serif/Newsleak-Serif.fnt", "$+<>#*'"),
+BOLD_SYMBOLS = borrow([("Pedallica/font-pedallica.fnt", "$+<>#&*_")], NONTENDO_BOLD)
+LIGHT_SYMBOLS = borrow([("Newsleak Serif/Newsleak-Serif.fnt", "$+<>#*'_"),
                         ("Bitmore/font-Bitmore.fnt", "&")], NONTENDO_LIGHT)
 
 convert_font("Nontendo-Bold", "nontendo_bold", BOLD_SYMBOLS)

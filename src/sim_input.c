@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 #include <string.h>
 #include "sim_input.h"
 #include "platform.h"
@@ -129,7 +131,7 @@ void sim_input_poll(float dt)
         if (keys[SDL_SCANCODE_LEFTBRACKET] || keys[SDL_SCANCODE_PAGEUP])   s_action_held[SIM_ACT_PREV_TOOL] = true;
         if (keys[SDL_SCANCODE_RIGHTBRACKET] || keys[SDL_SCANCODE_PAGEDOWN]) s_action_held[SIM_ACT_NEXT_TOOL] = true;
 
-        /* Classic SimCity Direct Tool Hotkeys */
+        /* Classic direct tool hotkeys */
         if (keys[SDL_SCANCODE_R]) s_action_held[SIM_ACT_TOOL_ROAD] = true;
         if (keys[SDL_SCANCODE_W]) s_action_held[SIM_ACT_TOOL_WIRE] = true;
         if (keys[SDL_SCANCODE_B] || keys[SDL_SCANCODE_D]) s_action_held[SIM_ACT_TOOL_DOZER] = true;

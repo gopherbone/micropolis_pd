@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Part of micropolis_pd, a modified version of Micropolis. See NOTICE.md. */
 /*
  * AngelCode BMFont (XML) loader + renderer.
  * The page PNG is preprocessed to white glyphs with alpha, so glyphs can be

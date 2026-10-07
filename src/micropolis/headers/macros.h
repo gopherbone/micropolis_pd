@@ -60,6 +60,12 @@
  * NOT APPLY TO YOU.
  */
 
+
+/* Modified version (GPL v3 section 5a / additional terms): this file is not
+ * the original Micropolis source. It was converted to C99 for vtcity by
+ * tenox7, adapted for Tiny Engine by icedman (tiny_micropolis), and changed
+ * further for the Playdate in 2026 by micropolis_pd. See NOTICE.md. */
+
 #define ABS(x)		(((x) < 0) ? (-(x)) : (x))
 
 #define HASHED_CMD(scope, name) \
