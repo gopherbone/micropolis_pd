@@ -21,6 +21,12 @@
 
 int eventHandler(PlaydateAPI *pd, PDSystemEvent event, uint32_t arg);
 
+/* Game hooks for the `city` command */
+typedef struct scene_t scene_t;
+void game_start_embedded_city(const char *name);
+scene_t *game_get_scene(void);
+void scene_set(scene_t *scene);
+
 /* ------------------------------------------------------------------ */
 /* Bitmaps                                                             */
 
@@ -681,6 +687,11 @@ int main(int argc, char **argv)
                 if (n >= 3) s_menu[idx].value = atoi(a2);
                 if (s_menu[idx].cb) s_menu[idx].cb(s_menu[idx].ud);
             }
+            run_frame();
+        } else if (!strcmp(cmd, "city")) {
+            /* city NAME.cty: load an embedded example city and enter the game */
+            game_start_embedded_city(a1);
+            scene_set(game_get_scene());
             run_frame();
         } else if (!strcmp(cmd, "env")) {
             setenv(a1, a2, 1);

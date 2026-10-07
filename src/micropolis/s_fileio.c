@@ -128,7 +128,8 @@ _finish_load(void)
   autoBulldoze = MiscHis[52];	/* flag for autoBulldoze */
   autoBudget = MiscHis[53];	/* flag for autoBudget */
   autoGo = MiscHis[54];		/* flag for autoGo */
-  UserSoundOn = MiscHis[55];	/* flag for the sound on/off */
+  /* MiscHis[55] holds the saving player's sound setting; sound is a device
+     preference, so loading a city (or a demo backdrop) must not change it. */
   CityTax = MiscHis[56];
   SimSpeed = MiscHis[57];
   //  sim_skips = sim_skip = 0;
@@ -253,6 +254,12 @@ int saveFile(char *filename)
   l = CityTime;
   HALF_SWAP_LONGS(&l, 1);
   (*(QUAD *)(MiscHis + 8)) = l;
+
+  /* SetValves only refreshes these every few sim ticks; make them current so
+   * slot listings don't show the previous city's population */
+  MiscHis[2] = ResPop;
+  MiscHis[3] = ComPop;
+  MiscHis[4] = IndPop;
 
   MiscHis[52] = autoBulldoze;	/* flag for autoBulldoze */
   MiscHis[53] = autoBudget;	/* flag for autoBudget */
@@ -652,7 +659,8 @@ int city_read_meta(const char *filename, city_meta_t *meta)
   short res_pop = misc[2];
   short com_pop = misc[3];
   short ind_pop = misc[4];
-  meta->population = (res_pop + com_pop + ind_pop) * 100;
+  /* Same formula the simulation uses for CityPop */
+  meta->population = ((long)res_pop + ((long)com_pop + ind_pop) * 8) * 20;
   meta->difficulty = misc[15];
   meta->score = misc[17];
 

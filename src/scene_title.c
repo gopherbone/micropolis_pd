@@ -21,7 +21,8 @@ typedef enum {
     PAGE_NEW,
     PAGE_LOAD,
     PAGE_SCENARIOS,
-    PAGE_ABOUT
+    PAGE_ABOUT,
+    PAGE_DEMOS
 } title_page_t;
 
 typedef enum {
@@ -48,6 +49,14 @@ static bool s_overview_dirty = true;
 static float s_rep_timer[SIM_ACT_COUNT];
 static bool s_rep[SIM_ACT_COUNT];
 static float s_crank_acc = 0.0f;
+
+/* Backdrop: a demo city drifting under the menu, swapped every so often */
+#define BACKDROP_PERIOD 40.0f
+#define BACKDROP_FADE 0.6f
+static int s_demo = 0;
+static float s_backdrop_t = 0.0f;
+static bool s_backdrop_is_demo = false;
+static int s_bx0, s_by0, s_bx1, s_by1; /* built-up area, px at 8px zoom */
 
 static const struct {
     const char *name;
@@ -131,6 +140,29 @@ static void go(title_page_t page, int sel)
 
 /* ------------------------------------------------------------------------ */
 
+static void backdrop_measure(void)
+{
+    int x0, y0, x1, y1;
+    if (game_city_bounds(&x0, &y0, &x1, &y1)) {
+        s_bx0 = x0 * 8;
+        s_by0 = y0 * 8;
+        s_bx1 = (x1 + 1) * 8;
+        s_by1 = (y1 + 1) * 8;
+    } else {
+        s_bx0 = s_by0 = 0;
+        s_bx1 = CITY_W * 8;
+        s_by1 = CITY_H * 8;
+    }
+}
+
+static void backdrop_load(int demo)
+{
+    s_demo = game_load_backdrop(demo);
+    s_backdrop_is_demo = true;
+    s_backdrop_t = 0.0f;
+    backdrop_measure();
+}
+
 static void scene_title_init(scene_t *self)
 {
     (void)self;
@@ -142,8 +174,15 @@ static void scene_title_init(scene_t *self)
     refresh_autosave();
     go(PAGE_MAIN, s_has_autosave ? MAIN_CONTINUE : MAIN_NEW);
 
-    /* Backdrop: whatever city is loaded, else the example city */
-    if (!game_has_city()) game_load_backdrop();
+    /* Backdrop: a random demo city on boot; after quitting, your own city
+     * stays up until the next swap */
+    if (!game_has_city()) {
+        backdrop_load((int)(platform_now() * 7.0) % game_demo_count());
+    } else {
+        s_backdrop_is_demo = false;
+        s_backdrop_t = 0.0f;
+        backdrop_measure();
+    }
 }
 
 static void start_game(void)
@@ -207,6 +246,7 @@ static void update_new(void)
         }
     } else if (sim_action_pressed(SIM_ACT_SECONDARY)) {
         ui_sound(UI_SND_BACK);
+        backdrop_load(s_demo + 1);
         go(PAGE_MAIN, MAIN_NEW);
     }
 }
@@ -225,8 +265,7 @@ static void update_load(void)
             }
         } else {
             ui_sound(UI_SND_SELECT);
-            game_start_embedded_city("about.cty");
-            start_game();
+            go(PAGE_DEMOS, s_demo);
         }
     } else if (sim_action_pressed(SIM_ACT_SECONDARY)) {
         ui_sound(UI_SND_BACK);
@@ -247,6 +286,19 @@ static void update_scenarios(void)
     }
 }
 
+static void update_demos(void)
+{
+    s_sel = move_sel(s_sel, game_demo_count());
+    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
+        ui_sound(UI_SND_SELECT);
+        game_start_demo(s_sel);
+        start_game();
+    } else if (sim_action_pressed(SIM_ACT_SECONDARY)) {
+        ui_sound(UI_SND_BACK);
+        go(PAGE_LOAD, 4);
+    }
+}
+
 static void scene_title_update(scene_t *self, float dt)
 {
     (void)self;
@@ -263,11 +315,18 @@ static void scene_title_update(scene_t *self, float dt)
         animateTiles();
     }
 
+    /* Swap the backdrop city now and then (not while previewing terrain) */
+    if (s_page != PAGE_NEW) {
+        s_backdrop_t += dt;
+        if (s_backdrop_t >= BACKDROP_PERIOD) backdrop_load(s_demo + (s_backdrop_is_demo ? 1 : 0));
+    }
+
     switch (s_page) {
     case PAGE_MAIN: update_main(); break;
     case PAGE_NEW: update_new(); break;
     case PAGE_LOAD: update_load(); break;
     case PAGE_SCENARIOS: update_scenarios(); break;
+    case PAGE_DEMOS: update_demos(); break;
     case PAGE_ABOUT:
         if (sim_action_pressed(SIM_ACT_PRIMARY) || sim_action_pressed(SIM_ACT_SECONDARY)) {
             ui_sound(UI_SND_BACK);
@@ -279,15 +338,54 @@ static void scene_title_update(scene_t *self, float dt)
 
 /* ------------------------------------------------------------------------ */
 
+/* Drift range for one axis: keep the view over the built-up area */
+static float drift_axis(int lo, int hi, int view, int world, float phase)
+{
+    float a = (float)lo, b = (float)(hi - view);
+    if (b < a) a = b = (lo + hi - view) / 2.0f;
+    float v = a + (b - a) * (0.5f + 0.5f * phase);
+    if (v < 0) v = 0;
+    if (v > world - view) v = (float)(world - view);
+    return v;
+}
+
 static void draw_backdrop(void)
 {
     mapview_sync();
-    /* Slow Lissajous drift over the 8px city */
-    float max_x = CITY_W * 8 - SCREEN_W, max_y = CITY_H * 8 - SCREEN_H;
-    int cx = (int)(max_x * (0.5f + 0.42f * sinf(s_time * 0.035f)));
-    int cy = (int)(max_y * (0.5f + 0.40f * sinf(s_time * 0.05f + 1.0f)));
+    /* Slow Lissajous drift over the 8px city, starting fresh with each city */
+    float t = s_backdrop_t + s_demo * 11.0f;
+    /* The menu card covers the left of the screen: aim the open right part
+     * (from x = MENU_COVER) at the dense area */
+    const int MENU_COVER = 200;
+    int vx = (int)drift_axis(s_bx0, s_bx1, SCREEN_W - MENU_COVER, CITY_W * 8 + MENU_COVER, sinf(t * 0.11f));
+    int cx = vx - MENU_COVER;
+    if (cx < 0) cx = 0;
+    if (cx > CITY_W * 8 - SCREEN_W) cx = CITY_W * 8 - SCREEN_W;
+    int cy = (int)drift_axis(s_by0, s_by1, SCREEN_H, CITY_H * 8, sinf(t * 0.08f + 1.0f));
     mapview_draw(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
     mapview_draw_sprites(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+
+    /* Dissolve to black around a city swap */
+    float fade = 0.0f;
+    if (s_backdrop_t < BACKDROP_FADE) fade = 1.0f - s_backdrop_t / BACKDROP_FADE;
+    else if (s_backdrop_t > BACKDROP_PERIOD - BACKDROP_FADE) fade = (s_backdrop_t - (BACKDROP_PERIOD - BACKDROP_FADE)) / BACKDROP_FADE;
+    if (fade > 0.02f) {
+        uint8_t a = (uint8_t)(fade >= 1.0f ? 255 : fade * 254.0f);
+        render_fill_rect(vec2i(0, 0), vec2i(SCREEN_W, SCREEN_H), rgba(0, 0, 0, a));
+    }
+}
+
+/* Name chip in the corner so you know which city you're looking at */
+static void draw_backdrop_label(void)
+{
+    char year[16];
+    snprintf(year, sizeof(year), "%d", CurrentYear());
+    const char *name = CityName ? CityName : "";
+    int w = ui_text_width(UI_FONT_BOLD, name) + 8 + ui_text_width(UI_FONT_LIGHT, year) + 16;
+    int x = SCREEN_W - 8 - w, y = SCREEN_H - 30;
+    ui_panel_dark(x, y, w, 20);
+    int tx = x + 8 + ui_text(UI_FONT_BOLD, x + 8, y + 4, name, FONT_ALIGN_LEFT, UI_WHITE) + 8;
+    ui_text(UI_FONT_LIGHT, tx, y + 4, year, FONT_ALIGN_LEFT, UI_WHITE);
 }
 
 static void draw_list_row(int x, int y, int w, const char *label, const char *value, bool sel, bool dim)
@@ -311,6 +409,7 @@ static void draw_logo(int x, int y)
 static void draw_main(void)
 {
     draw_backdrop();
+    draw_backdrop_label();
     const int px = 10, py = 10, pw = 182, ph = SCREEN_H - 20;
     ui_panel(px, py, pw, ph);
     draw_logo(px + 12, py + 10);
@@ -400,8 +499,8 @@ static void draw_load(void)
                 snprintf(label, sizeof(label), "Slot %d: empty", i + 1);
             }
         } else {
-            snprintf(label, sizeof(label), "Example city");
-            snprintf(val, sizeof(val), "Micropolis");
+            snprintf(label, sizeof(label), "Demo Cities");
+            snprintf(val, sizeof(val), "%d classics", game_demo_count());
         }
         draw_list_row(x + 6, y + 30 + i * 20, w - 12, label, val[0] ? val : NULL, i == s_sel, !exists);
     }
@@ -426,6 +525,21 @@ static void draw_scenarios(void)
     ui_text(UI_FONT_BOLD, dx, y + 56, s_scenarios[s_sel].name, FONT_ALIGN_LEFT, UI_BLACK);
     ui_text_wrap(UI_FONT_LIGHT, dx, y + 76, dw, s_scenarios[s_sel].brief, UI_BLACK, 6);
     ui_hints(x + w - 8, y + h - 20, "Play", "Back", UI_BLACK);
+}
+
+static void draw_demos(void)
+{
+    draw_backdrop();
+    ui_dim(0, 0, SCREEN_W, SCREEN_H);
+    int n = game_demo_count();
+    const int w = 240, h = 30 + n * 19 + 28, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
+    ui_panel(x, y, w, h);
+    ui_text(UI_FONT_BOLD, x + 12, y + 8, "Demo Cities", FONT_ALIGN_LEFT, UI_BLACK);
+    ui_hline(x + 6, y + 24, w - 12, UI_BLACK);
+    for (int i = 0; i < n; i++) {
+        draw_list_row(x + 6, y + 28 + i * 19, w - 12, game_demo_name(i), NULL, i == s_sel, false);
+    }
+    ui_hints(x + w - 8, y + h - 21, "Play", "Back", UI_BLACK);
 }
 
 static void draw_about(void)
@@ -455,6 +569,7 @@ static void scene_title_draw(scene_t *self)
     case PAGE_LOAD: draw_load(); break;
     case PAGE_SCENARIOS: draw_scenarios(); break;
     case PAGE_ABOUT: draw_about(); break;
+    case PAGE_DEMOS: draw_demos(); break;
     }
 }
 

@@ -9,6 +9,7 @@ The classic city simulator, rebuilt for the [Playdate](https://play.date): the f
 [Micropolis](https://github.com/SimHacker/micropolis) is the open-source release of the original SimCity. This project takes [icedman's Tiny Engine port](https://github.com/icedman/tiny_micropolis) of that simulation and gives it a Playdate-native interface:
 
 - **The whole simulation.** Zoning, power grids, traffic, pollution, crime, land value, budgets, disasters, public opinion, and all eight historical scenarios.
+- **Nine demo cities.** Classic Micropolis example maps like Haight, Kyoto, Kowloon and Yokohama, ready to explore, and rotating behind the title menu.
 - **The map takes up nearly the whole screen.** A slim status bar shows funds, date, population, R/C/I demand and speed. A chip at the bottom shows the current tool and its cost.
 - **Crank to zoom.** Switch between 16px tiles and an 8px overview that shows four times as much city.
 - **Everything else is one button away.** B opens a build sheet with all 16 tools, plus the Budget, City Report, City Map and Game pages.
@@ -20,7 +21,7 @@ The classic city simulator, rebuilt for the [Playdate](https://play.date): the f
 | | |
 |:---:|:---:|
 | ![Title screen: menu card over an aerial view of a city](docs/screenshots/title.png) | ![New City screen with a whole-map terrain preview](docs/screenshots/new-city.png) |
-| **Title.** The menu drifts over a live city. | **New City.** Preview the terrain and regenerate it until you like it. |
+| **Title.** The menu drifts over a rotating cast of classic cities. | **New City.** Preview the terrain and regenerate it until you like it. |
 | ![Build sheet: a grid of 16 tool icons with details for the Road tool](docs/screenshots/build-sheet.png) | ![A road being dragged out from a residential zone, with a running cost label](docs/screenshots/drag-build.png) |
 | **Build sheet.** All tools in a 4×4 grid, with live previews, costs and descriptions. | **Drag-building.** Hold A and move to lay road, rail or power lines. |
 | ![Far zoom over Detroit showing four times as much city](docs/screenshots/far-zoom.png) | ![City Map with nine data layers](docs/screenshots/city-map.png) |
@@ -29,6 +30,8 @@ The classic city simulator, rebuilt for the [Playdate](https://play.date): the f
 | **Budget.** Adjust with the D-pad or the crank. | **Demand.** What residents, shops and industry want. |
 | ![Inspect card listing density, value, crime, pollution, growth and power](docs/screenshots/inspect.png) | ![Scenario list with a briefing for Dullsville, 1900](docs/screenshots/scenarios.png) |
 | **Inspect.** Check what's happening on any tile. | **Scenarios.** Eight historical challenges, from Dullsville to Rio. |
+| ![Demo Cities list: Haight, Kowloon, Kyoto, Kobe, Yokohama, Radial, Kamakura, Joffburg, North Dullsville](docs/screenshots/demo-cities.png) | ![Game menu with speed, save, load, disasters and options](docs/screenshots/game-menu.png) |
+| **Demo cities.** Pick up any of nine classic maps from Load City. | **Game menu.** Speed, saves, disasters and options. |
 
 ## Controls
 
@@ -101,6 +104,7 @@ Screenshots go to `tools/harness/out/`. Scripts are plain text: `tap a`, `hold r
 - **[tiny_micropolis](https://github.com/icedman/tiny_micropolis)** by icedman is the Tiny Engine port of the simulation, which this project builds on.
 - **Fonts and button glyphs** come from the Playdate SDK by Panic: Nontendo (by Shaun Inman), plus symbols from Pedallica, Newsleak Serif and Bitmore, and the system button glyphs from Asheville Sans.
 - **City art and sounds** are the original Micropolis black-and-white tiles, sprites and sound effects.
+- **Demo cities** are example cities that shipped with Micropolis.
 
 ## AI disclosure
 
@@ -110,7 +114,7 @@ Most of the code in this fork was written by Claude, an AI model made by Anthrop
 - the redesigned interface (`game.c`, `screens.c`, `scene_title.c`, `ui.c`, `map_view.c`),
 - the 16px tool icons in `tools/art.py`,
 - the asset pipeline, the screenshot harness and the GitHub Actions workflow,
-- bug fixes to the port (stack overflow when saving, the year showing as 0, new cities starting with 0% tax and funding),
+- bug fixes to the port (stack overflow when saving, the year showing as 0, new cities starting with 0% tax and funding, wrong populations in save slots, loading a city switching sound off),
 - this README.
 
 The simulation in `src/micropolis/` is the original Micropolis code as ported by vtcity and tiny_micropolis.

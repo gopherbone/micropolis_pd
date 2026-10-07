@@ -1,0 +1,18 @@
+# Title backdrop rotation and the Demo Cities page
+frames 30
+shot d1_title
+frames 1165
+shot d2_fade
+frames 40
+shot d3_next
+tap down
+tap a
+frames 2
+tap down 4
+tap a
+frames 2
+shot d4_demos
+tap down
+tap a
+frames 30
+shot d5_kowloon

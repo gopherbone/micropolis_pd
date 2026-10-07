@@ -10,7 +10,13 @@ scene_t *game_get_scene(void);
 void game_ensure_init(void);
 bool game_has_city(void);                       /* a city/terrain is loaded */
 void game_generate_terrain(int seed);           /* fresh terrain, no city yet */
-void game_load_backdrop(void);                  /* example city for the title screen */
+int  game_load_backdrop(int demo);              /* demo city for the title; returns the one used */
+bool game_city_bounds(int *x0, int *y0, int *x1, int *y1); /* built-up area, in tiles */
+
+/* Demo cities: classic Micropolis example maps */
+int  game_demo_count(void);
+const char *game_demo_name(int i);
+void game_start_demo(int demo);
 void game_start_new_city(int difficulty);       /* uses the current terrain */
 void game_start_scenario(int scenario_id);
 void game_start_embedded_city(const char *name);

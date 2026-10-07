@@ -381,12 +381,86 @@ const char *game_random_city_name(int seed)
     return s_city_names[(unsigned)seed % (unsigned)n];
 }
 
-void game_load_backdrop(void)
+/* The best of the classic Micropolis example cities embedded in the game */
+static const struct {
+    const char *file;
+    const char *name;
+    bool backdrop; /* dense enough on screen to sit behind the title menu */
+} s_demos[] = {
+    { "haight.cty",   "Haight",           true },
+    { "kowloon.cty",  "Kowloon",          false }, /* mostly harbour on screen */
+    { "kyoto.cty",    "Kyoto",            true },
+    { "kobe.cty",     "Kobe",             true },
+    { "yokohama.cty", "Yokohama",         true },
+    { "radial.cty",   "Radial",           true },
+    { "kamakura.cty", "Kamakura",         true },
+    { "joffburg.cty", "Joffburg",         false }, /* mostly river on screen */
+    { "ndulls.cty",   "North Dullsville", true },
+};
+#define DEMO_COUNT ((int)(sizeof(s_demos) / sizeof(s_demos[0])))
+
+int game_demo_count(void)
+{
+    return DEMO_COUNT;
+}
+
+const char *game_demo_name(int i)
+{
+    return (i >= 0 && i < DEMO_COUNT) ? s_demos[i].name : "";
+}
+
+static bool load_demo(int i)
+{
+    if (i < 0 || i >= DEMO_COUNT) return false;
+    if (!LoadEmbeddedCity((char *)s_demos[i].file)) return false;
+    setAnyCityName((char *)s_demos[i].name);
+    return true;
+}
+
+int game_load_backdrop(int demo)
 {
     game_ensure_init();
-    if (!LoadEmbeddedCity("about.cty")) GenerateNewCity();
+    demo = ((demo % DEMO_COUNT) + DEMO_COUNT) % DEMO_COUNT;
+    for (int i = 0; i < DEMO_COUNT && !s_demos[demo].backdrop; i++) demo = (demo + 1) % DEMO_COUNT;
+    if (!load_demo(demo)) GenerateNewCity();
     mapview_invalidate();
     s_city_loaded = true;
+    return demo;
+}
+
+void game_start_demo(int demo)
+{
+    game_ensure_init();
+    if (!load_demo(demo)) GenerateNewCity();
+    reset_view();
+    game_set_speed(2);
+}
+
+bool game_city_bounds(int *x0, int *y0, int *x1, int *y1)
+{
+    /* Bounding box of the densely built part of the map: 8x8-tile blocks
+     * where at least a quarter of the tiles are buildings or zones */
+    enum { B = 8 };
+    int bx0 = CITY_W, by0 = CITY_H, bx1 = -1, by1 = -1;
+    if (!Map[0]) return false;
+    for (int by = 0; by < CITY_H; by += B) {
+        for (int bx = 0; bx < CITY_W; bx += B) {
+            int built = 0;
+            for (int y = by; y < by + B && y < CITY_H; y++)
+                for (int x = bx; x < bx + B && x < CITY_W; x++)
+                    if ((Map[x][y] & LOMASK) >= RESBASE) built++;
+            if (built * 4 < B * B) continue;
+            if (bx < bx0) bx0 = bx;
+            if (by < by0) by0 = by;
+            if (bx + B - 1 > bx1) bx1 = bx + B - 1;
+            if (by + B - 1 > by1) by1 = by + B - 1;
+        }
+    }
+    if (bx1 < 0) return false;
+    *x0 = bx0; *y0 = by0;
+    *x1 = bx1 < CITY_W ? bx1 : CITY_W - 1;
+    *y1 = by1 < CITY_H ? by1 : CITY_H - 1;
+    return true;
 }
 
 void game_generate_terrain(int seed)
@@ -524,7 +598,7 @@ static void game_scene_init(scene_t *self)
 
     /* Nothing loaded yet (shouldn't happen from the title, but be safe) */
     if (!s_city_loaded) {
-        if (!LoadEmbeddedCity("about.cty")) GenerateNewCity();
+        if (!load_demo(0)) GenerateNewCity();
         reset_view();
     }
 }

@@ -757,7 +757,8 @@ typedef enum {
     MENU_SAVE,
     MENU_LOAD,
     MENU_QUIT,
-    MENU_LAYERS
+    MENU_LAYERS,
+    MENU_DEMOS
 } menu_kind_t;
 
 #define MAX_ITEMS 10
@@ -836,12 +837,16 @@ static void build_items(void)
             slot_label(i, buf, sizeof(buf), &ex);
             add_item(buf, NULL, ex);
         }
-        add_item("Example: Micropolis", NULL, true);
+        add_item("Demo Cities...", NULL, true);
         break;
     case MENU_QUIT:
         s_menu_title = "Quit to title?";
         add_item("Yes, quit", NULL, true);
         add_item("Keep playing", NULL, true);
+        break;
+    case MENU_DEMOS:
+        s_menu_title = "Demo Cities";
+        for (int i = 0; i < game_demo_count(); i++) add_item(game_demo_name(i), NULL, true);
         break;
     case MENU_LAYERS:
         s_menu_title = "City Map";
@@ -879,6 +884,7 @@ static void menu_back(void)
     case MENU_SAVE: open_menu(MENU_GAME, 1); break;
     case MENU_LOAD: open_menu(MENU_GAME, 2); break;
     case MENU_QUIT: open_menu(MENU_GAME, 7); break;
+    case MENU_DEMOS: open_menu(MENU_LOAD, 4); break;
     default: close_to_play(); break;
     }
 }
@@ -937,9 +943,13 @@ static void menu_activate(void)
     case MENU_LOAD:
         if (sel < 4) {
             if (!game_load_slot(sel + 1)) game_show_message("Couldn't load that city.", ICON_ALERT);
+            close_to_play();
         } else {
-            game_start_embedded_city("about.cty");
+            open_menu(MENU_DEMOS, 0);
         }
+        break;
+    case MENU_DEMOS:
+        game_start_demo(sel);
         close_to_play();
         break;
     case MENU_QUIT:
