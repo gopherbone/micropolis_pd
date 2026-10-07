@@ -7,6 +7,7 @@
 #ifndef GAME_INTERNAL_H
 #define GAME_INTERNAL_H
 
+#include <math.h>
 #include <stdbool.h>
 #include "sim_input.h"
 #include "map_view.h"
@@ -62,16 +63,9 @@ typedef struct {
 
 extern game_state_t G;
 
-/* Camera in whole screen pixels, snapped to even values. The tile art's
- * dithers repeat every 2px, so moving in 2px steps keeps them stable on
- * screen instead of flipping phase (shimmering) on odd-pixel moves. */
-static inline int cam_px(float v)
-{
-    int i = (int)(v < 0 ? v - 1.0f : v);
-    return i & ~1;
-}
-#define CAM_X() cam_px(G.cam_x)
-#define CAM_Y() cam_px(G.cam_y)
+/* Camera in whole screen pixels */
+#define CAM_X() ((int)floorf(G.cam_x))
+#define CAM_Y() ((int)floorf(G.cam_y))
 
 /* --- game.c services used by screens ------------------------------------ */
 int  game_tool_cost(int tool);

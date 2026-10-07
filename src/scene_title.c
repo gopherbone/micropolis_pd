@@ -53,12 +53,13 @@ static bool s_rep[SIM_ACT_COUNT];
 static float s_crank_acc = 0.0f;
 
 /* Backdrop: a demo city drifting under the menu, swapped every so often */
+#define BACKDROP_ZOOM 16 /* near zoom: the original hand-dithered tile art */
 #define BACKDROP_PERIOD 40.0f
 #define BACKDROP_FADE 0.6f
 static int s_demo = 0;
 static float s_backdrop_t = 0.0f;
 static bool s_backdrop_is_demo = false;
-static int s_bx0, s_by0, s_bx1, s_by1; /* built-up area, px at 8px zoom */
+static int s_bx0, s_by0, s_bx1, s_by1; /* built-up area, px at BACKDROP_ZOOM */
 
 static const struct {
     const char *name;
@@ -146,14 +147,14 @@ static void backdrop_measure(void)
 {
     int x0, y0, x1, y1;
     if (game_city_bounds(&x0, &y0, &x1, &y1)) {
-        s_bx0 = x0 * 8;
-        s_by0 = y0 * 8;
-        s_bx1 = (x1 + 1) * 8;
-        s_by1 = (y1 + 1) * 8;
+        s_bx0 = x0 * BACKDROP_ZOOM;
+        s_by0 = y0 * BACKDROP_ZOOM;
+        s_bx1 = (x1 + 1) * BACKDROP_ZOOM;
+        s_by1 = (y1 + 1) * BACKDROP_ZOOM;
     } else {
         s_bx0 = s_by0 = 0;
-        s_bx1 = CITY_W * 8;
-        s_by1 = CITY_H * 8;
+        s_bx1 = CITY_W * BACKDROP_ZOOM;
+        s_by1 = CITY_H * BACKDROP_ZOOM;
     }
 }
 
@@ -354,22 +355,19 @@ static float drift_axis(int lo, int hi, int view, int world, float phase)
 static void draw_backdrop(void)
 {
     mapview_sync();
-    /* Slow Lissajous drift over the 8px city, starting fresh with each city */
+    /* Slow Lissajous drift over the city, starting fresh with each city */
+    const int Z = BACKDROP_ZOOM;
     float t = s_backdrop_t + s_demo * 11.0f;
     /* The menu card covers the left of the screen: aim the open right part
      * (from x = MENU_COVER) at the dense area */
     const int MENU_COVER = 200;
-    int vx = (int)drift_axis(s_bx0, s_bx1, SCREEN_W - MENU_COVER, CITY_W * 8 + MENU_COVER, sinf(t * 0.11f));
+    int vx = (int)drift_axis(s_bx0, s_bx1, SCREEN_W - MENU_COVER, CITY_W * Z + MENU_COVER, sinf(t * 0.06f));
     int cx = vx - MENU_COVER;
     if (cx < 0) cx = 0;
-    if (cx > CITY_W * 8 - SCREEN_W) cx = CITY_W * 8 - SCREEN_W;
-    int cy = (int)drift_axis(s_by0, s_by1, SCREEN_H, CITY_H * 8, sinf(t * 0.08f + 1.0f));
-    /* Move in 2px steps: the tiles' dithers repeat every 2px, so odd-pixel
-     * steps would make every patterned area flicker as the city drifts */
-    cx &= ~1;
-    cy &= ~1;
-    mapview_draw(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
-    mapview_draw_sprites(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+    if (cx > CITY_W * Z - SCREEN_W) cx = CITY_W * Z - SCREEN_W;
+    int cy = (int)drift_axis(s_by0, s_by1, SCREEN_H, CITY_H * Z, sinf(t * 0.045f + 1.0f));
+    mapview_draw(Z, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+    mapview_draw_sprites(Z, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
 
     /* Dissolve to black around a city swap */
     float fade = 0.0f;
