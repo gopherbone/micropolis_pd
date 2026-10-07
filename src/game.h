@@ -14,6 +14,7 @@ bool game_has_city(void);                       /* a city/terrain is loaded */
 void game_generate_terrain(int seed);           /* fresh terrain, no city yet */
 int  game_load_backdrop(int demo);              /* demo city for the title; returns the one used */
 bool game_city_bounds(int *x0, int *y0, int *x1, int *y1); /* built-up area, in tiles */
+bool game_city_hotspot(int w, int h, int *tx, int *ty); /* centre of the busiest w x h tile window */
 
 /* Demo cities: classic Micropolis example maps */
 int  game_demo_count(void);

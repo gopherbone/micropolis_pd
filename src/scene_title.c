@@ -61,6 +61,16 @@ static float s_backdrop_t = 0.0f;
 static bool s_backdrop_is_demo = false;
 static int s_bx0, s_by0, s_bx1, s_by1; /* built-up area, px at BACKDROP_ZOOM */
 
+/* Backdrop camera: drifts at a steady pace, easing into each turn but never
+ * slower than DRIFT_MIN of cruising speed */
+#define MENU_COVER 200      /* the menu card covers the left of the screen */
+#define DRIFT_SPEED_X 16.0f /* px per second */
+#define DRIFT_SPEED_Y 10.0f
+#define DRIFT_EASE 40.0f    /* px from a turn where easing starts */
+#define DRIFT_MIN 0.35f
+static float s_cam_x, s_cam_y;
+static float s_dir_x = 1.0f, s_dir_y = 1.0f;
+
 static const struct {
     const char *name;
     const char *year;
@@ -143,19 +153,78 @@ static void go(title_page_t page, int sel)
 
 /* ------------------------------------------------------------------------ */
 
+/* Drift range for the camera on one axis: keep the open part of the screen
+ * (from `cover` to `view`) over the built-up area [lo, hi) */
+static void drift_range(int lo, int hi, int cover, int view, int world, float *a, float *b)
+{
+    float r0 = (float)(lo - cover), r1 = (float)(hi - view);
+    if (r1 < r0) r0 = r1 = (lo + hi - cover - view) / 2.0f;
+    if (r0 < 0) r0 = 0;
+    if (r1 > world - view) r1 = (float)(world - view);
+    if (r0 > r1) r0 = r1;
+    *a = r0;
+    *b = r1;
+}
+
 static void backdrop_measure(void)
 {
+    const int Z = BACKDROP_ZOOM;
     int x0, y0, x1, y1;
     if (game_city_bounds(&x0, &y0, &x1, &y1)) {
-        s_bx0 = x0 * BACKDROP_ZOOM;
-        s_by0 = y0 * BACKDROP_ZOOM;
-        s_bx1 = (x1 + 1) * BACKDROP_ZOOM;
-        s_by1 = (y1 + 1) * BACKDROP_ZOOM;
+        s_bx0 = x0 * Z;
+        s_by0 = y0 * Z;
+        s_bx1 = (x1 + 1) * Z;
+        s_by1 = (y1 + 1) * Z;
     } else {
         s_bx0 = s_by0 = 0;
-        s_bx1 = CITY_W * BACKDROP_ZOOM;
-        s_by1 = CITY_H * BACKDROP_ZOOM;
+        s_bx1 = CITY_W * Z;
+        s_by1 = CITY_H * Z;
     }
+
+    /* Start with the densest block in the middle of the open area */
+    int hx, hy;
+    float ax, bx, ay, by;
+    drift_range(s_bx0, s_bx1, MENU_COVER, SCREEN_W, CITY_W * Z, &ax, &bx);
+    drift_range(s_by0, s_by1, 0, SCREEN_H, CITY_H * Z, &ay, &by);
+    if (game_city_hotspot((SCREEN_W - MENU_COVER) / Z, SCREEN_H / Z, &hx, &hy)) {
+        s_cam_x = hx * Z + Z / 2 - (MENU_COVER + (SCREEN_W - MENU_COVER) / 2);
+        s_cam_y = hy * Z + Z / 2 - SCREEN_H / 2;
+    } else {
+        s_cam_x = (ax + bx) / 2;
+        s_cam_y = (ay + by) / 2;
+    }
+    if (s_cam_x < ax) s_cam_x = ax;
+    if (s_cam_x > bx) s_cam_x = bx;
+    if (s_cam_y < ay) s_cam_y = ay;
+    if (s_cam_y > by) s_cam_y = by;
+    /* Head towards the side with more room */
+    s_dir_x = (bx - s_cam_x) >= (s_cam_x - ax) ? 1.0f : -1.0f;
+    s_dir_y = (by - s_cam_y) >= (s_cam_y - ay) ? 1.0f : -1.0f;
+}
+
+static void drift_axis_step(float *pos, float *dir, float a, float b, float speed, float dt)
+{
+    if (b - a < 1.0f) {
+        *pos = a;
+        return;
+    }
+    float to_edge = *dir > 0 ? b - *pos : *pos - a;
+    float ease = to_edge / DRIFT_EASE;
+    if (ease > 1.0f) ease = 1.0f;
+    if (ease < DRIFT_MIN) ease = DRIFT_MIN;
+    *pos += *dir * speed * ease * dt;
+    if (*pos >= b) { *pos = b; *dir = -1.0f; }
+    if (*pos <= a) { *pos = a; *dir = 1.0f; }
+}
+
+static void backdrop_drift(float dt)
+{
+    const int Z = BACKDROP_ZOOM;
+    float ax, bx, ay, by;
+    drift_range(s_bx0, s_bx1, MENU_COVER, SCREEN_W, CITY_W * Z, &ax, &bx);
+    drift_range(s_by0, s_by1, 0, SCREEN_H, CITY_H * Z, &ay, &by);
+    drift_axis_step(&s_cam_x, &s_dir_x, ax, bx, DRIFT_SPEED_X, dt);
+    drift_axis_step(&s_cam_y, &s_dir_y, ay, by, DRIFT_SPEED_Y, dt);
 }
 
 static void backdrop_load(int demo)
@@ -321,6 +390,7 @@ static void scene_title_update(scene_t *self, float dt)
     /* Swap the backdrop city now and then (not while previewing terrain) */
     if (s_page != PAGE_NEW) {
         s_backdrop_t += dt;
+        backdrop_drift(dt);
         if (s_backdrop_t >= BACKDROP_PERIOD) backdrop_load(s_demo + (s_backdrop_is_demo ? 1 : 0));
     }
 
@@ -341,31 +411,11 @@ static void scene_title_update(scene_t *self, float dt)
 
 /* ------------------------------------------------------------------------ */
 
-/* Drift range for one axis: keep the view over the built-up area */
-static float drift_axis(int lo, int hi, int view, int world, float phase)
-{
-    float a = (float)lo, b = (float)(hi - view);
-    if (b < a) a = b = (lo + hi - view) / 2.0f;
-    float v = a + (b - a) * (0.5f + 0.5f * phase);
-    if (v < 0) v = 0;
-    if (v > world - view) v = (float)(world - view);
-    return v;
-}
-
 static void draw_backdrop(void)
 {
     mapview_sync();
-    /* Slow Lissajous drift over the city, starting fresh with each city */
     const int Z = BACKDROP_ZOOM;
-    float t = s_backdrop_t + s_demo * 11.0f;
-    /* The menu card covers the left of the screen: aim the open right part
-     * (from x = MENU_COVER) at the dense area */
-    const int MENU_COVER = 200;
-    int vx = (int)drift_axis(s_bx0, s_bx1, SCREEN_W - MENU_COVER, CITY_W * Z + MENU_COVER, sinf(t * 0.06f));
-    int cx = vx - MENU_COVER;
-    if (cx < 0) cx = 0;
-    if (cx > CITY_W * Z - SCREEN_W) cx = CITY_W * Z - SCREEN_W;
-    int cy = (int)drift_axis(s_by0, s_by1, SCREEN_H, CITY_H * Z, sinf(t * 0.045f + 1.0f));
+    int cx = (int)s_cam_x, cy = (int)s_cam_y;
     mapview_draw(Z, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
     mapview_draw_sprites(Z, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
 

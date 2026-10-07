@@ -438,6 +438,33 @@ void game_start_demo(int demo)
     game_set_speed(2);
 }
 
+bool game_city_hotspot(int w, int h, int *tx, int *ty)
+{
+    /* Centre of the w x h tile window holding the most buildings and zones
+     * (summed-area table, so every position is checked) */
+    static unsigned short sat[CITY_H + 1][CITY_W + 1];
+    if (!Map[0]) return false;
+    if (w > CITY_W) w = CITY_W;
+    if (h > CITY_H) h = CITY_H;
+    for (int y = 0; y <= CITY_H; y++) sat[y][0] = 0;
+    for (int x = 0; x <= CITY_W; x++) sat[0][x] = 0;
+    for (int y = 0; y < CITY_H; y++)
+        for (int x = 0; x < CITY_W; x++)
+            sat[y + 1][x + 1] = (unsigned short)(((Map[x][y] & LOMASK) >= RESBASE) + sat[y][x + 1] + sat[y + 1][x] - sat[y][x]);
+    int best = 0;
+    for (int y = 0; y + h <= CITY_H; y++) {
+        for (int x = 0; x + w <= CITY_W; x++) {
+            int n = sat[y + h][x + w] - sat[y][x + w] - sat[y + h][x] + sat[y][x];
+            if (n > best) {
+                best = n;
+                *tx = x + w / 2;
+                *ty = y + h / 2;
+            }
+        }
+    }
+    return best > 0;
+}
+
 bool game_city_bounds(int *x0, int *y0, int *x1, int *y1)
 {
     /* Bounding box of the densely built part of the map: 8x8-tile blocks
