@@ -214,18 +214,27 @@ with open(os.path.join(ROOT, "src", "ui_icons.h"), "w") as f:
         f.write(f"    ICON_{name.upper()},\n")
     f.write(f"    ICON_COUNT\n}};\n\n#define ICON_INVERT_OFFSET {block_rows * per_row}\n\n#endif\n")
 
-# 8px tiles for the far zoom: 2x2 box average + 4x4 ordered dither
+# 8px tiles for the far zoom: 2x2 box average, then ordered dither.
+# The dither is done separately for each (x, y) scroll parity (variants
+# _p1.._p3) with the Bayer matrix shifted to cancel the camera's offset, so the
+# pattern is anchored to the screen rather than to the map: a grey area keeps
+# exactly the same pixels while the city scrolls under it. Every level used
+# here (0, 4, 8, 12, 16 of 16) repeats every 2px, so four variants cover all
+# offsets.
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 full = Image.open(os.path.join(DST, "gfx", "tiles_16.png")).convert("L")
-half = Image.new("L", (full.width // 2, full.height // 2), 0)
 fp = full.load()
-hp = half.load()
-for y in range(half.height):
-    for x in range(half.width):
-        whites = sum(1 for dy in (0, 1) for dx in (0, 1) if fp[x * 2 + dx, y * 2 + dy] >= 128)
-        level = whites * 4  # 0..16
-        hp[x, y] = 255 if BAYER[y & 3][x & 3] < level else 0
-half.convert("1", dither=Image.NONE).save(os.path.join(DST, "gfx", "tiles_8.png"))
+HW, HH = full.width // 2, full.height // 2
+levels = [[sum(1 for dy in (0, 1) for dx in (0, 1) if fp[x * 2 + dx, y * 2 + dy] >= 128) * 4
+           for x in range(HW)] for y in range(HH)]
+for v, (ox, oy) in enumerate(((0, 0), (1, 0), (0, 1), (1, 1))):
+    half = Image.new("L", (HW, HH), 0)
+    hp = half.load()
+    for y in range(HH):
+        for x in range(HW):
+            hp[x, y] = 255 if BAYER[(y - oy) & 3][(x - ox) & 3] < levels[y][x] else 0
+    name = "tiles_8.png" if v == 0 else f"tiles_8_p{v}.png"
+    half.convert("1", dither=Image.NONE).save(os.path.join(DST, "gfx", name))
 
 # UI click sounds (short sine blips)
 os.makedirs(os.path.join(DST, "sounds", "ui"), exist_ok=True)
@@ -297,3 +306,75 @@ with open(os.path.join(ROOT, "src", "ui_glyphs.h"), "w") as f:
     f.write("static const int k_glyph_advance[GLYPH_COUNT] = { " + ", ".join(map(str, widths)) + " };\n\n#endif\n")
 print("native glyphs extracted")
 
+
+
+# ---------------------------------------------------------------------------
+# Scroll-stable dithering. The tile art is full of textures that repeat every
+# 2px (checkerboards, 25% dots). When the map scrolls by an odd number of
+# pixels those textures land on the opposite phase and every patterned area
+# flickers. For each of the four (x, y) scroll parities we make a copy of the
+# atlas whose textured pixels are phase-shifted to compensate; the game draws
+# from the copy matching the camera's parity, so textures stay put on screen
+# while the shapes underneath scroll smoothly.
+
+def textured_mask(px, w, h, x0, y0, ts):
+    """Per-pixel flags for one tile: True where the 3x3 neighbourhood repeats
+    every 2px in both directions (corners equal, left == right, up == down)
+    and isn't flat. That catches checkerboards and dot textures even in the
+    narrow bands the road and zone art uses."""
+    mask = [[False] * ts for _ in range(ts)]
+    for ty in range(1, ts - 1):
+        for tx in range(1, ts - 1):
+            g = lambda dx, dy: px[x0 + tx + dx, y0 + ty + dy]
+            c = g(0, 0)
+            corners = (g(-1, -1), g(1, -1), g(-1, 1), g(1, 1))
+            if not (corners[0] == corners[1] == corners[2] == corners[3]):
+                continue
+            if g(-1, 0) != g(1, 0) or g(0, -1) != g(0, 1):
+                continue
+            if c == corners[0] == g(-1, 0) == g(0, -1):
+                continue  # flat
+            mask[ty][tx] = True
+    # Also take in band-edge pixels that continue a neighbouring texture:
+    # same value as the textured pixel two steps away, next to the texture.
+    grown = [row[:] for row in mask]
+    for ty in range(ts):
+        for tx in range(ts):
+            if mask[ty][tx]:
+                continue
+            v = px[x0 + tx, y0 + ty]
+            touches = any(0 <= tx + dx < ts and 0 <= ty + dy < ts and mask[ty + dy][tx + dx]
+                          for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            continues = any(0 <= tx + dx < ts and 0 <= ty + dy < ts and mask[ty + dy][tx + dx]
+                            and px[x0 + tx + dx, y0 + ty + dy] == v
+                            for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)))
+            if touches and continues:
+                grown[ty][tx] = True
+    return grown
+
+
+def phase_variants(path_in, ts, out_prefix):
+    src = Image.open(path_in).convert("L")
+    w, h = src.size
+    px = src.load()
+    variants = {v: src.copy() for v in (1, 2, 3)}
+    vpx = {v: variants[v].load() for v in variants}
+    for ty0 in range(0, h, ts):
+        for tx0 in range(0, w, ts):
+            mask = textured_mask(px, w, h, tx0, ty0, ts)
+            for y in range(ts):
+                for x in range(ts):
+                    if not mask[y][x]:
+                        continue
+                    for v, (dx, dy) in ((1, (1, 0)), (2, (0, 1)), (3, (1, 1))):
+                        # sample the texture one phase over, from either side
+                        for sx, sy in ((x - dx, y - dy), (x + dx, y + dy), (x - dx, y + dy), (x + dx, y - dy)):
+                            if 0 <= sx < ts and 0 <= sy < ts and mask[sy][sx]:
+                                vpx[v][tx0 + x, ty0 + y] = px[tx0 + sx, ty0 + sy]
+                                break
+    for v, im in variants.items():
+        im.convert("1", dither=Image.NONE).save(f"{out_prefix}_p{v}.png")
+
+
+phase_variants(os.path.join(DST, "gfx", "tiles_16.png"), 16, os.path.join(DST, "gfx", "tiles_16"))
+print("scroll-phase tile variants prepared")

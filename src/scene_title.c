@@ -364,10 +364,6 @@ static void draw_backdrop(void)
     if (cx < 0) cx = 0;
     if (cx > CITY_W * 8 - SCREEN_W) cx = CITY_W * 8 - SCREEN_W;
     int cy = (int)drift_axis(s_by0, s_by1, SCREEN_H, CITY_H * 8, sinf(t * 0.08f + 1.0f));
-    /* Move in 2px steps: the tiles' dithers repeat every 2px, so odd-pixel
-     * steps would make every patterned area flicker as the city drifts */
-    cx &= ~1;
-    cy &= ~1;
     mapview_draw(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
     mapview_draw_sprites(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
 
