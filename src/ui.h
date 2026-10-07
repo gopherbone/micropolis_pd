@@ -52,10 +52,6 @@ void ui_icon(int icon, int x, int y, bool inverted);
 /* Tiles from the city tileset (16px or 8px variants) */
 void ui_tile16(int tile, int x, int y);
 void ui_tile8(int tile, int x, int y);
-/* Scroll-phase variant for a camera at (x & 1) + 2 * (y & 1): keeps dither
- * patterns fixed on screen while the map scrolls */
-void ui_tile16v(int tile, int x, int y, int variant);
-void ui_tile8v(int tile, int x, int y, int variant);
 image_t *ui_tiles16(void);
 image_t *ui_tiles8(void);
 

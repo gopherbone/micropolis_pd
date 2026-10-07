@@ -10,9 +10,7 @@
 
 #define LIGHTNING_TILE 827
 
-/* Far zoom (8px) is pre-rendered per scroll-phase variant, one full-map bitmap
- * each; near zoom (16px) draws only the visible tiles each frame. */
-static texture_t *s_cache8[4];
+static texture_t *s_cache[2];          /* [0] = 16px, [1] = 8px */
 static unsigned short s_shadow[CITY_W * CITY_H];
 static bool s_valid = false;
 
@@ -50,8 +48,8 @@ const char *mapview_layer_legend(map_layer_t layer)
 
 void mapview_init(void)
 {
-    for (int v = 0; v < 4; v++)
-        if (!s_cache8[v]) s_cache8[v] = texture_create_target(vec2i(CITY_W * 8, CITY_H * 8));
+    if (!s_cache[0]) s_cache[0] = texture_create_target(vec2i(CITY_W * 16, CITY_H * 16));
+    if (!s_cache[1]) s_cache[1] = texture_create_target(vec2i(CITY_W * 8, CITY_H * 8));
     if (!s_overview) s_overview = texture_create_target(vec2i(CITY_W * 2, CITY_H * 2));
     if (!s_sprites) s_sprites = image_load("assets/gfx/sprites_16.png");
     s_valid = false;
@@ -66,15 +64,17 @@ void mapview_invalidate(void)
 void mapview_sync(void)
 {
     if (!Map[0]) return;
-    for (int v = 0; v < 4; v++) {
-        texture_t *cache = s_cache8[v];
+    for (int c = 0; c < 2; c++) {
+        texture_t *cache = s_cache[c];
         if (!cache) continue;
+        int ts = c == 0 ? 16 : 8;
         render_set_target(cache);
         for (int y = 0; y < CITY_H; y++) {
             for (int x = 0; x < CITY_W; x++) {
                 unsigned short t = Map[x][y] & LOMASK;
                 if (s_valid && s_shadow[y * CITY_W + x] == t) continue;
-                ui_tile8v(t, x * 8, y * 8, v);
+                if (ts == 16) ui_tile16(t, x * 16, y * 16);
+                else ui_tile8(t, x * 8, y * 8);
             }
         }
         render_set_target(NULL);
@@ -84,29 +84,24 @@ void mapview_sync(void)
     s_valid = true;
 }
 
-/* Which scroll-phase variant keeps dithers fixed on screen for this camera */
-static int phase_variant(int cam_x, int cam_y)
-{
-    return (cam_x & 1) + 2 * (cam_y & 1);
-}
-
 void mapview_draw(int zoom, int cam_x, int cam_y, int x, int y, int w, int h)
 {
     if (!Map[0]) return;
-    int v = phase_variant(cam_x, cam_y);
+    int ci = zoom == 16 ? 0 : 1;
 
     render_set_clip(vec2i(x, y), vec2i(w, h));
-    if (zoom == 8 && s_cache8[v]) {
-        render_draw_texture(s_cache8[v], vec2i(x - cam_x, y - cam_y));
+    if (s_cache[ci]) {
+        render_draw_texture(s_cache[ci], vec2i(x - cam_x, y - cam_y));
     } else {
+        /* Fallback if the big cache bitmap couldn't be allocated */
         int tx0 = cam_x / zoom, ty0 = cam_y / zoom;
         for (int ty = ty0; ty <= ty0 + h / zoom + 1 && ty < CITY_H; ty++)
             for (int tx = tx0; tx <= tx0 + w / zoom + 1 && tx < CITY_W; tx++) {
                 if (tx < 0 || ty < 0) continue;
                 unsigned short t = Map[tx][ty] & LOMASK;
                 int sx = x + tx * zoom - cam_x, sy = y + ty * zoom - cam_y;
-                if (zoom == 16) ui_tile16v(t, sx, sy, v);
-                else ui_tile8v(t, sx, sy, v);
+                if (zoom == 16) ui_tile16(t, sx, sy);
+                else ui_tile8(t, sx, sy);
             }
     }
 
@@ -119,8 +114,8 @@ void mapview_draw(int zoom, int cam_x, int cam_y, int x, int y, int w, int h)
                 unsigned short cell = Map[tx][ty];
                 if ((cell & ZONEBIT) && !(cell & PWRBIT)) {
                     int sx = x + tx * zoom - cam_x, sy = y + ty * zoom - cam_y;
-                    if (zoom == 16) ui_tile16v(LIGHTNING_TILE, sx, sy, v);
-                    else ui_tile8v(LIGHTNING_TILE, sx, sy, v);
+                    if (zoom == 16) ui_tile16(LIGHTNING_TILE, sx, sy);
+                    else ui_tile8(LIGHTNING_TILE, sx, sy);
                 }
             }
         }

@@ -13,9 +13,6 @@ static bmfont_t *s_fonts[UI_FONT_COUNT];
 static image_t *s_icons = NULL;
 static image_t *s_tiles16 = NULL;
 static image_t *s_tiles8 = NULL;
-/* Scroll-phase variants (see tools/prep_assets.py): [0] is the plain atlas */
-static image_t *s_tiles16v[4];
-static image_t *s_tiles8v[4];
 static image_t *s_glyphs = NULL;
 
 bool ui_init(void)
@@ -26,15 +23,6 @@ bool ui_init(void)
     if (!s_icons) s_icons = image_load("assets/gfx/icons.png");
     if (!s_tiles16) s_tiles16 = image_load("assets/gfx/tiles_16.png");
     if (!s_tiles8) s_tiles8 = image_load("assets/gfx/tiles_8.png");
-    s_tiles16v[0] = s_tiles16;
-    s_tiles8v[0] = s_tiles8;
-    for (int v = 1; v < 4; v++) {
-        char path[64];
-        snprintf(path, sizeof(path), "assets/gfx/tiles_16_p%d.png", v);
-        if (!s_tiles16v[v]) s_tiles16v[v] = image_load(path);
-        snprintf(path, sizeof(path), "assets/gfx/tiles_8_p%d.png", v);
-        if (!s_tiles8v[v]) s_tiles8v[v] = image_load(path);
-    }
     if (!s_glyphs) s_glyphs = image_load("assets/gfx/glyphs.png");
     return s_fonts[UI_FONT_BOLD] && s_icons && s_tiles16;
 }
@@ -125,18 +113,6 @@ void ui_tile16(int tile, int x, int y)
 void ui_tile8(int tile, int x, int y)
 {
     image_draw_tile(s_tiles8, tile, vec2i(8, 8), vec2i(x, y), false, false, rgba_white());
-}
-
-void ui_tile16v(int tile, int x, int y, int variant)
-{
-    image_t *img = (variant > 0 && variant < 4 && s_tiles16v[variant]) ? s_tiles16v[variant] : s_tiles16;
-    image_draw_tile(img, tile, vec2i(16, 16), vec2i(x, y), false, false, rgba_white());
-}
-
-void ui_tile8v(int tile, int x, int y, int variant)
-{
-    image_t *img = (variant > 0 && variant < 4 && s_tiles8v[variant]) ? s_tiles8v[variant] : s_tiles8;
-    image_draw_tile(img, tile, vec2i(8, 8), vec2i(x, y), false, false, rgba_white());
 }
 
 image_t *ui_tiles16(void) { return s_tiles16; }
