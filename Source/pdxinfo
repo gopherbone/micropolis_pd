@@ -1,6 +1,6 @@
-name=micropolis
-author=Developer
-description=A game project created with Tiny Game Engine
+name=Micropolis
+author=icedman
+description=SimCity Classic (Micropolis) for Playdate
 bundleID=com.developer.micropolis
 version=1.0.0
 buildNumber=1

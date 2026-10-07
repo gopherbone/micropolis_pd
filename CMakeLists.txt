@@ -29,35 +29,13 @@ set(PLAYDATE_GAME_DEVICE micropolis_DEVICE)
 project(${PLAYDATE_GAME_NAME} C ASM)
 
 set(ENGINE_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/alloc.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/easing.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/render.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/image.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/animation.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/font.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/sound.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/map.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/trace.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/entity.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/camera.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/scene.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/dither.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/json.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/noise.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/input.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/polygon.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/svg.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/render/render_playdate.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/platform/platform_playdate.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sound/sound_playdate.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/platform/syscalls.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs/mod4play/ft_tables.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs/mod4play/m4p.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs/mod4play/pmp_mix.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs/mod4play/pmp_main.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs/mod4play/pmplay.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs/mod4play/snd_masm.c
+    engine/core/render.c
+    engine/core/image.c
+    engine/core/font.c
+    engine/core/sound.c
+    engine/core/scene.c
+    engine/platform/platform_playdate.c
+    engine/platform/syscalls.c
     src/micropolis/g_ani.c
     src/micropolis/rand.c
     src/micropolis/random.c
@@ -84,7 +62,9 @@ set(ENGINE_SOURCES
     src/micropolis/w_tool.c
     src/micropolis/w_update.c
     src/micropolis/w_util.c
-    src/sim_render.c
+    src/ui.c
+    src/map_view.c
+    src/screens.c
     src/sim_input.c
     src/scene_title.c
     src/game.c
@@ -93,12 +73,8 @@ set(ENGINE_SOURCES
 
 
 set(INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/platform
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sound
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/libs
+    engine/core
+    engine/platform
     src
     src/micropolis/headers
 )

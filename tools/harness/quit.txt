@@ -1,0 +1,22 @@
+frames 10
+tap a
+frames 3
+tap a
+frames 30
+tap b
+tap up
+tap right 2
+tap a
+tap down 7
+tap a
+tap up
+hold a
+frames 6
+release a
+frames 10
+shot q_after_quit
+hold a
+frames 6
+release a
+frames 20
+shot q_continue

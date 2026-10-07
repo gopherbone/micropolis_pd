@@ -1,0 +1,7 @@
+frames 10
+tap down 2
+tap a
+tap down 5
+tap a
+frames 300
+shot g_final

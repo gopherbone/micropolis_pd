@@ -1,0 +1,38 @@
+frames 10
+tap a
+frames 3
+tap a
+frames 30
+hold a
+tap right 5
+release a
+frames 5
+tap b
+tap up
+tap right 2
+tap a
+frames 2
+tap down
+tap a
+frames 2
+shot s1_slots
+tap a
+frames 10
+shot s2_saved
+tap b
+tap up
+tap right 2
+tap a
+tap down 7
+tap a
+tap up
+tap a
+frames 10
+shot s3_title
+tap down 2
+tap a
+frames 2
+shot s4_load
+tap a
+frames 10
+shot s5_loaded

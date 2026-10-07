@@ -1,978 +1,690 @@
+/*
+ * In-game scene: simulation glue, the main map view (cursor, camera, zoom,
+ * building), HUD, and dispatch to the modal screens in screens.c.
+ *
+ * Controls (map view):
+ *   D-pad   move cursor (accelerates when held; camera follows smoothly)
+ *   A       build with the current tool; hold A + D-pad to drag-build
+ *   B       open the build sheet (tools + city menus)
+ *   Crank   zoom between near (16px) and far (8px)
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
+#include "game_internal.h"
 #include "platform.h"
 #include "render.h"
 #include "scene.h"
 #include "scene_title.h"
 #include "sound.h"
 #include "types.h"
-#include "sim_input.h"
+#include "ui.h"
 
 #include "sim.h"
-#include "sim_render.h"
 
-typedef enum {
-    MODE_PLAY = 0,
-    MODE_QUERY,
-    MODE_BUDGET,
-    MODE_EVAL,
-    MODE_DISASTERS,
-    MODE_SCENARIOS,
-    MODE_MENU,
-    MODE_SAVE_SLOTS,
-    MODE_LOAD_SLOTS
-} game_mode_t;
+extern QUAD CostOf[];
 
-static game_mode_t s_game_mode = MODE_PLAY;
+game_state_t G = { .mode = MODE_PLAY, .tool = TOOL_ROAD, .zoom = 16 };
+
+const tool_def_t g_tools[TOOL_COUNT] = {
+    [TOOL_DOZER]   = { dozeState,        1, ICON_BULLDOZER,   "Bulldozer",
+                       "Clears land, rubble and buildings. Hold A and move to clear a path.", RUBBLE, PREVIEW_ROW },
+    [TOOL_ROAD]    = { roadState,        1, ICON_ROAD,        "Road",
+                       "Connects zones so people and goods can move. Hold A and move to pave.", 66, PREVIEW_ROW },
+    [TOOL_RAIL]    = { rrState,          1, ICON_RAIL,        "Rail",
+                       "Mass transit that cuts traffic. Can't carry power.", 226, PREVIEW_ROW },
+    [TOOL_WIRE]    = { wireState,        1, ICON_WIRE,        "Power Line",
+                       "Carries electricity from plants to zones. Zones also pass power along.", 210, PREVIEW_ROW },
+    [TOOL_RES]     = { residentialState, 3, ICON_RESIDENTIAL, "Residential",
+                       "Homes for your citizens. Grows when there's demand, power and roads.", RESBASE, PREVIEW_BLOCK },
+    [TOOL_COM]     = { commercialState,  3, ICON_COMMERCIAL,  "Commercial",
+                       "Shops and offices. Needs customers from homes and a good location.", COMBASE, PREVIEW_BLOCK },
+    [TOOL_IND]     = { industrialState,  3, ICON_INDUSTRIAL,  "Industrial",
+                       "Factories provide jobs but pollute. Keep them away from homes.", INDBASE, PREVIEW_BLOCK },
+    [TOOL_PARK]    = { parkState,        1, ICON_PARK,        "Park",
+                       "Trees and fountains raise land value and lift spirits.", 840, PREVIEW_ROW },
+    [TOOL_POLICE]  = { policeState,      3, ICON_POLICE,      "Police Station",
+                       "Cuts crime in the surrounding area. Needs funding to work.", POLICESTBASE, PREVIEW_BLOCK },
+    [TOOL_FIRE]    = { fireState,        3, ICON_FIRE,        "Fire Station",
+                       "Puts out fires and protects nearby buildings.", FIRESTBASE, PREVIEW_BLOCK },
+    [TOOL_STADIUM] = { stadiumState,     4, ICON_STADIUM,     "Stadium",
+                       "Citizens demand one once the city grows. Boosts residential growth.", STADIUMBASE, PREVIEW_BLOCK },
+    [TOOL_QUERY]   = { queryState,       1, ICON_QUERY,       "Inspect",
+                       "Free. Shows what's on a tile: density, value, crime and pollution.", 0, PREVIEW_ICON },
+    [TOOL_COAL]    = { powerState,       4, ICON_COAL,        "Coal Plant",
+                       "Cheap power for about 50 zones, but heavy pollution.", COALBASE, PREVIEW_BLOCK },
+    [TOOL_NUCLEAR] = { nuclearState,     4, ICON_NUCLEAR,     "Nuclear Plant",
+                       "Clean power for about 150 zones. Small risk of meltdown.", NUCLEARBASE, PREVIEW_BLOCK },
+    [TOOL_SEAPORT] = { seaportState,     4, ICON_SEAPORT,     "Seaport",
+                       "Lets industry ship goods. Build on the coast.", PORTBASE, PREVIEW_BLOCK },
+    [TOOL_AIRPORT] = { airportState,     6, ICON_AIRPORT,     "Airport",
+                       "Commerce needs one to keep growing in a big city.", AIRPORTBASE, PREVIEW_BLOCK },
+};
+
+static bool s_initialized = false;
+static bool s_city_loaded = false;
 static float s_sim_accumulator = 0.0f;
 static float s_blink_accumulator = 0.0f;
-static int   s_current_tool = roadState;
-static bool  s_initialized = false;
 
-/* Tool Definitions */
-static const struct {
-    int state;
-    int size;
-    const char *name;
-} s_tools[] = {
-    { roadState,        1, "Road ($10)" },
-    { wireState,        1, "Wire ($5)" },
-    { dozeState,        1, "Bulldozer ($1)" },
-    { residentialState, 3, "Res Zone ($100)" },
-    { commercialState,  3, "Com Zone ($100)" },
-    { industrialState,  3, "Ind Zone ($100)" },
-    { fireState,        3, "Fire Dept ($500)" },
-    { policeState,      3, "Police Dept ($500)" },
-    { stadiumState,     4, "Stadium ($5000)" },
-    { parkState,        1, "Park ($10)" },
-    { seaportState,     4, "Seaport ($3000)" },
-    { powerState,       4, "Coal Power ($3000)" },
-    { nuclearState,     4, "Nuclear ($5000)" },
-    { airportState,     6, "Airport ($10000)" },
-    { queryState,       1, "Query" }
-};
-#define TOOL_COUNT ((int)(sizeof(s_tools) / sizeof(s_tools[0])))
-static int s_tool_index = 0;
-
-/* Modals & UI State */
-static sim_query_info_t s_query_info;
-static sim_budget_modal_t s_budget_modal;
-static sim_eval_modal_t s_eval_modal;
-static sim_menu_modal_t s_menu_modal;
-
-/* Toast notifications */
-static char s_toast_msg[128] = "";
-static float s_toast_timer = 0.0f;
-
-/* Navigation & repeat timers */
-static float s_key_held_time = 0.0f;
-static float s_repeat_timer = 0.0f;
+/* Cursor movement */
+static float s_move_timer = 0.0f;
+static float s_move_held = 0.0f;
 static int s_last_dx = 0, s_last_dy = 0;
-static int s_last_drag_tx = -1, s_last_drag_ty = -1;
-static float s_palette_timer = 3.0f;
 
-static void show_toast(const char *msg, float duration)
+/* Menu-style auto-repeat for D-pad */
+static float s_rep_timer[SIM_ACT_COUNT];
+static bool s_rep_fire[SIM_ACT_COUNT];
+
+/* Crank */
+static float s_crank = 0.0f;
+static float s_crank_accum = 0.0f;
+static float s_zoom_accum = 0.0f;
+
+/* Feedback */
+typedef struct {
+    char text[16];
+    int tx, ty;     /* tile */
+    float t;
+} floater_t;
+#define MAX_FLOATERS 6
+static floater_t s_floaters[MAX_FLOATERS];
+static float s_error_flash = 0.0f;
+
+static char s_ticker[128] = "";
+static int s_ticker_icon = ICON_ALERT;
+static float s_ticker_t = 0.0f;
+
+/* Pending notice from the sim (picture id arrives before its text) */
+static int s_pending_notice = 0;
+static int s_pending_x = -1, s_pending_y = -1;
+
+/* System menu */
+static int s_menu_speed = -1;
+static int s_menu_zoom = -1;
+static bool s_menu_open_game = false;
+
+static int s_new_seed = 0;
+
+/* ------------------------------------------------------------------------ */
+/* Input helpers                                                             */
+
+bool input_nav(sim_action_t act)
 {
-    if (!msg) return;
-    strncpy(s_toast_msg, msg, sizeof(s_toast_msg) - 1);
-    s_toast_msg[sizeof(s_toast_msg) - 1] = '\0';
-    s_toast_timer = duration;
+    return s_rep_fire[act];
 }
 
-static void select_tool(int idx)
+float input_crank(void)
 {
-    if (idx < 0) idx = 0;
-    if (idx >= TOOL_COUNT) idx = TOOL_COUNT - 1;
-    s_tool_index = idx;
-    s_current_tool = s_tools[idx].state;
-    g_sim_viewport.tool_size = s_tools[idx].size;
-    if (sim && sim->editor) {
-        setWandState(sim->editor, s_current_tool);
+    return s_crank;
+}
+
+int input_crank_steps(float detent)
+{
+    s_crank_accum += s_crank;
+    int steps = 0;
+    while (s_crank_accum >= detent) {
+        steps++;
+        s_crank_accum -= detent;
     }
-    show_toast(s_tools[idx].name, 2.0f);
-    s_palette_timer = 3.0f;
-}
-
-static void open_budget_modal(void)
-{
-    s_budget_modal.tax_rate = CityTax;
-    s_budget_modal.road_fund = (int)(roadPercent * 100.0f + 0.5f);
-    s_budget_modal.police_fund = (int)(policePercent * 100.0f + 0.5f);
-    s_budget_modal.fire_fund = (int)(firePercent * 100.0f + 0.5f);
-    s_budget_modal.selected_item = 0;
-    s_budget_modal.tax_revenue = (TaxFund > 0) ? TaxFund : (TotalPop * CityTax * 5);
-    s_budget_modal.road_cost = (long)(RoadFund * (s_budget_modal.road_fund / 100.0f));
-    s_budget_modal.police_cost = (long)(PoliceFund * (s_budget_modal.police_fund / 100.0f));
-    s_budget_modal.fire_cost = (long)(FireFund * (s_budget_modal.fire_fund / 100.0f));
-    s_budget_modal.previous_funds = TotalFunds;
-    s_budget_modal.current_funds = TotalFunds;
-    s_game_mode = MODE_BUDGET;
-}
-
-static void open_eval_modal(void)
-{
-    CityEvaluation();
-    s_eval_modal.yes_pct = CityYes;
-    s_eval_modal.no_pct = CityNo;
-    s_eval_modal.score = CityScore;
-    s_eval_modal.pop = (int)(TotalPop * 100);
-    s_eval_modal.class_id = CityClass;
-    s_eval_modal.assessed_val = CityAssValue;
-    for (int i = 0; i < 4; i++) {
-        s_eval_modal.problems[i] = ProblemOrder[i];
-        s_eval_modal.problem_votes[i] = ProblemVotes[ProblemOrder[i]];
+    while (s_crank_accum <= -detent) {
+        steps--;
+        s_crank_accum += detent;
     }
-    s_game_mode = MODE_EVAL;
+    return steps;
 }
 
-static const char *s_disaster_names[] = {
-    "Fire",
-    "Flood",
-    "Earthquake",
-    "Tornado",
-    "Monster Attack",
-    "Nuclear Meltdown",
-    "Cancel"
-};
-
-static void open_disasters_menu(void)
+static void input_frame(float dt)
 {
-    s_menu_modal.title = "TRIGGER DISASTER";
-    s_menu_modal.item_count = 7;
-    s_menu_modal.selected_index = 0;
-    for (int i = 0; i < 7; i++) {
-        s_menu_modal.items[i] = s_disaster_names[i];
-    }
-    s_game_mode = MODE_DISASTERS;
-}
-
-static const char *s_scenario_names[] = {
-    "1. Dullsville (1900)",
-    "2. San Francisco (1906)",
-    "3. Hamburg (1944)",
-    "4. Bern (1965)",
-    "5. Tokyo (1957)",
-    "6. Detroit (1972)",
-    "7. Boston (2010)",
-    "8. Rio de Janeiro (2047)",
-    "Cancel"
-};
-
-static void open_scenarios_menu(void)
-{
-    s_menu_modal.title = "SELECT SCENARIO";
-    s_menu_modal.item_count = 9;
-    s_menu_modal.selected_index = 0;
-    for (int i = 0; i < 9; i++) {
-        s_menu_modal.items[i] = s_scenario_names[i];
-    }
-    s_game_mode = MODE_SCENARIOS;
-}
-
-static const char *s_system_menu_items[] = {
-    "Resume Game",
-    "City Budget & Taxes",
-    "City Evaluation",
-    "Disasters Menu",
-    "Select Scenario",
-    "Save City to Slot",
-    "Load City from Slot",
-    "Cycle Map Overlay",
-    "Toggle Minimap Radar",
-    "Simulation Speed",
-    "Quit to Main Menu"
-};
-#define SYSTEM_MENU_COUNT 11
-
-static char s_save_slot_labels[5][48];
-static char s_load_slot_labels[5][48];
-
-static void open_system_menu(void)
-{
-    s_menu_modal.title = "SYSTEM MENU";
-    s_menu_modal.item_count = SYSTEM_MENU_COUNT;
-    s_menu_modal.selected_index = 0;
-    for (int i = 0; i < SYSTEM_MENU_COUNT; i++) {
-        s_menu_modal.items[i] = s_system_menu_items[i];
-    }
-    s_game_mode = MODE_MENU;
-}
-
-static void open_save_slots_menu(void)
-{
-    s_menu_modal.title = "SAVE CITY TO SLOT";
-    s_menu_modal.item_count = 5;
-    s_menu_modal.selected_index = 0;
-    for (int i = 0; i < 4; i++) {
-        city_meta_t meta;
-        if (city_get_slot_meta(i + 1, &meta) && meta.exists) {
-            snprintf(s_save_slot_labels[i], sizeof(s_save_slot_labels[i]),
-                     "Slot %d: %.12s (%d, $%ldk)", i + 1, meta.name, meta.year, (long)(meta.funds / 1000));
-        } else {
-            snprintf(s_save_slot_labels[i], sizeof(s_save_slot_labels[i]),
-                     "Slot %d: [Empty Slot]", i + 1);
+    static const sim_action_t dirs[] = { SIM_ACT_UP, SIM_ACT_DOWN, SIM_ACT_LEFT, SIM_ACT_RIGHT };
+    for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+        sim_action_t a = dirs[i];
+        s_rep_fire[a] = false;
+        if (sim_action_pressed(a)) {
+            s_rep_fire[a] = true;
+            s_rep_timer[a] = 0.30f;
+        } else if (sim_action_held(a)) {
+            s_rep_timer[a] -= dt;
+            if (s_rep_timer[a] <= 0.0f) {
+                s_rep_fire[a] = true;
+                s_rep_timer[a] = 0.075f;
+            }
         }
-        s_menu_modal.items[i] = s_save_slot_labels[i];
     }
-    snprintf(s_save_slot_labels[4], sizeof(s_save_slot_labels[4]), "Back");
-    s_menu_modal.items[4] = s_save_slot_labels[4];
-    s_game_mode = MODE_SAVE_SLOTS;
+    s_crank = sim_input_get_crank_change();
 }
 
-static void open_load_slots_menu(void)
+/* ------------------------------------------------------------------------ */
+/* Services                                                                  */
+
+int game_tool_cost(int tool)
 {
-    s_menu_modal.title = "LOAD CITY FROM SLOT";
-    s_menu_modal.item_count = 5;
-    s_menu_modal.selected_index = 0;
-    for (int i = 0; i < 4; i++) {
-        city_meta_t meta;
-        if (city_get_slot_meta(i + 1, &meta) && meta.exists) {
-            snprintf(s_load_slot_labels[i], sizeof(s_load_slot_labels[i]),
-                     "Slot %d: %.12s (%d, $%ldk)", i + 1, meta.name, meta.year, (long)(meta.funds / 1000));
-        } else {
-            snprintf(s_load_slot_labels[i], sizeof(s_load_slot_labels[i]),
-                     "Slot %d: [Empty Slot]", i + 1);
+    if (tool < 0 || tool >= TOOL_COUNT) return 0;
+    return (int)CostOf[g_tools[tool].state];
+}
+
+void game_select_tool(int tool)
+{
+    if (tool < 0 || tool >= TOOL_COUNT) return;
+    G.tool = tool;
+    if (sim && sim->editor) setWandState(sim->editor, g_tools[tool].state);
+    /* Keep the footprint on the map */
+    int size = g_tools[tool].size;
+    if (G.cur_x > CITY_W - size) G.cur_x = CITY_W - size;
+    if (G.cur_y > CITY_H - size) G.cur_y = CITY_H - size;
+}
+
+void game_set_speed(int speed)
+{
+    if (speed < 0) speed = 0;
+    if (speed > 3) speed = 3;
+    setSpeed((short)speed);
+    SimSpeed = (short)speed;
+    platform_menu_set_value(s_menu_speed, speed);
+}
+
+static void clamp_camera(float *cx, float *cy)
+{
+    float max_x = (float)(CITY_W * G.zoom - SCREEN_W);
+    float min_y = (float)-TOP_BAR_H;
+    float max_y = (float)(CITY_H * G.zoom - SCREEN_H + BOTTOM_BAR_H);
+    if (*cx < 0) *cx = 0;
+    if (*cx > max_x) *cx = max_x;
+    if (*cy < min_y) *cy = min_y;
+    if (*cy > max_y) *cy = max_y;
+}
+
+void game_set_zoom(int zoom)
+{
+    if (zoom != 8 && zoom != 16) return;
+    if (zoom == G.zoom) return;
+    /* Keep the cursor at the same spot on screen */
+    float sx = G.cur_x * G.zoom - G.cam_x;
+    float sy = G.cur_y * G.zoom - G.cam_y;
+    G.zoom = zoom;
+    G.cam_x = G.cur_x * zoom - sx;
+    G.cam_y = G.cur_y * zoom - sy;
+    clamp_camera(&G.cam_x, &G.cam_y);
+    platform_menu_set_value(s_menu_zoom, zoom == 16 ? 0 : 1);
+    ui_sound(UI_SND_ZOOM);
+}
+
+void game_center_on(int tx, int ty)
+{
+    if (tx < 0) tx = 0;
+    if (ty < 0) ty = 0;
+    if (tx >= CITY_W) tx = CITY_W - 1;
+    if (ty >= CITY_H) ty = CITY_H - 1;
+    int size = g_tools[G.tool].size;
+    G.cur_x = tx - size / 2;
+    G.cur_y = ty - size / 2;
+    if (G.cur_x < 0) G.cur_x = 0;
+    if (G.cur_y < 0) G.cur_y = 0;
+    if (G.cur_x > CITY_W - size) G.cur_x = CITY_W - size;
+    if (G.cur_y > CITY_H - size) G.cur_y = CITY_H - size;
+    G.cam_x = tx * G.zoom + G.zoom / 2 - SCREEN_W / 2;
+    G.cam_y = ty * G.zoom + G.zoom / 2 - SCREEN_H / 2;
+    clamp_camera(&G.cam_x, &G.cam_y);
+}
+
+void game_show_message(const char *msg, int icon)
+{
+    if (!msg || !*msg) return;
+    snprintf(s_ticker, sizeof(s_ticker), "%s", msg);
+    s_ticker_icon = icon;
+    s_ticker_t = 4.5f;
+}
+
+void game_quit_to_title(void)
+{
+    game_autosave();
+    scene_set(scene_title_create());
+}
+
+static long s_drag_spent = 0;
+static int s_drag_floater = -1;
+
+static void add_floater(const char *text, int tx, int ty)
+{
+    int slot = 0;
+    for (int i = 0; i < MAX_FLOATERS; i++) {
+        if (s_floaters[i].t <= 0.0f) {
+            slot = i;
+            break;
         }
-        s_menu_modal.items[i] = s_load_slot_labels[i];
+        if (s_floaters[i].t < s_floaters[slot].t) slot = i;
     }
-    snprintf(s_load_slot_labels[4], sizeof(s_load_slot_labels[4]), "Back");
-    s_menu_modal.items[4] = s_load_slot_labels[4];
-    s_game_mode = MODE_LOAD_SLOTS;
+    snprintf(s_floaters[slot].text, sizeof(s_floaters[slot].text), "%s", text);
+    s_floaters[slot].tx = tx;
+    s_floaters[slot].ty = ty;
+    s_floaters[slot].t = 0.9f;
+    s_drag_floater = slot;
 }
 
-static void trigger_disaster(int idx)
-{
-    switch (idx) {
-    case 0:
-        SetFire();
-        sound_play_sound("assets/sounds/fire.wav", 1.0f);
-        sound_play_sound("assets/sounds/siren.wav", 1.0f);
-        show_toast("FIRE REPORTED!", 3.0f);
-        break;
-    case 1:
-        MakeFlood();
-        sound_play_sound("assets/sounds/siren.wav", 1.0f);
-        show_toast("FLOODING REPORTED!", 3.0f);
-        break;
-    case 2:
-        MakeEarthquake();
-        sound_play_sound("assets/sounds/rumble.wav", 1.0f);
-        show_toast("MAJOR EARTHQUAKE!", 3.0f);
-        break;
-    case 3:
-        MakeTornado();
-        sound_play_sound("assets/sounds/siren.wav", 1.0f);
-        sound_play_sound("assets/sounds/woosh.wav", 1.0f);
-        show_toast("TORNADO SIGHTED!", 3.0f);
-        break;
-    case 4:
-        MakeMonster();
-        sound_play_sound("assets/sounds/monster.wav", 1.0f);
-        sound_play_sound("assets/sounds/siren.wav", 0.8f);
-        show_toast("MONSTER ATTACK!", 3.0f);
-        break;
-    case 5:
-        MakeMeltdown();
-        sound_play_sound("assets/sounds/explosion-low.wav", 1.0f);
-        sound_play_sound("assets/sounds/siren.wav", 1.0f);
-        show_toast("NUCLEAR MELTDOWN!", 3.0f);
-        break;
-    default: break;
-    }
-}
+/* ------------------------------------------------------------------------ */
+/* Sim callbacks                                                             */
 
-static void trigger_scenario(int idx)
-{
-    if (idx >= 0 && idx < 8) {
-        LoadScenario(idx + 1);
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Loaded %s", CityName ? CityName : "Scenario");
-        show_toast(buf, 3.0f);
-        /* Center camera */
-        g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
-        g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
-        g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
-        g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
-    }
-}
-
-/* UI Hooks from Sim Engine */
 static void cb_on_auto_goto(int x, int y)
 {
-    g_sim_viewport.cam_x = x * SIM_TILE_SIZE - g_sim_viewport.view_w / 2;
-    g_sim_viewport.cam_y = y * SIM_TILE_SIZE - g_sim_viewport.view_h / 2;
-    g_sim_viewport.cursor_x = x;
-    g_sim_viewport.cursor_y = y;
+    /* Don't yank the camera; remember where it happened for the notice card */
+    s_pending_x = x;
+    s_pending_y = y;
 }
 
 static void cb_on_show_notice(int id)
 {
-    char buf[128];
-    snprintf(buf, sizeof(buf), "Notice #%d", id);
-    show_toast(buf, 3.0f);
+    s_pending_notice = id;
 }
 
 static void cb_on_budget_modal(void)
 {
-    open_budget_modal();
+    budget_open();
 }
 
 static void cb_on_show_zone_status(char *str, char *s0, char *s1, char *s2, char *s3, char *s4, int x, int y)
 {
-    s_query_info.active = true;
-    strncpy(s_query_info.name, str ? str : "Zone", sizeof(s_query_info.name) - 1);
-    s_query_info.name[sizeof(s_query_info.name) - 1] = '\0';
-    strncpy(s_query_info.density, s0 ? s0 : "", sizeof(s_query_info.density) - 1);
-    s_query_info.density[sizeof(s_query_info.density) - 1] = '\0';
-    strncpy(s_query_info.value, s1 ? s1 : "", sizeof(s_query_info.value) - 1);
-    s_query_info.value[sizeof(s_query_info.value) - 1] = '\0';
-    strncpy(s_query_info.crime, s2 ? s2 : "", sizeof(s_query_info.crime) - 1);
-    s_query_info.crime[sizeof(s_query_info.crime) - 1] = '\0';
-    strncpy(s_query_info.pollution, s3 ? s3 : "", sizeof(s_query_info.pollution) - 1);
-    s_query_info.pollution[sizeof(s_query_info.pollution) - 1] = '\0';
-    strncpy(s_query_info.growth, s4 ? s4 : "", sizeof(s_query_info.growth) - 1);
-    s_query_info.growth[sizeof(s_query_info.growth) - 1] = '\0';
-    s_query_info.tile_x = x;
-    s_query_info.tile_y = y;
-    s_query_info.powered = (x >= 0 && x < SIM_MAP_WIDTH && y >= 0 && y < SIM_MAP_HEIGHT) ? ((Map[x][y] & PWRBIT) != 0) : false;
-    s_game_mode = MODE_QUERY;
+    bool powered = (x >= 0 && x < CITY_W && y >= 0 && y < CITY_H) ? ((Map[x][y] & PWRBIT) != 0) : false;
+    query_set(str, s0, s1, s2, s3, s4, x, y, powered);
 }
 
 static void cb_on_did_tool(const char *name, int x, int y)
 {
-    (void)x; (void)y;
-    if (!name) return;
-
-    if (strcmp(name, "Road") == 0)      sound_play_sound("assets/sounds/road.wav", 1.0f);
-    else if (strcmp(name, "Wire") == 0) sound_play_sound("assets/sounds/wire.wav", 1.0f);
-    else if (strcmp(name, "Park") == 0) sound_play_sound("assets/sounds/park.wav", 1.0f);
-    else if (strcmp(name, "Res") == 0)  sound_play_sound("assets/sounds/res.wav", 1.0f);
-    else if (strcmp(name, "Com") == 0)  sound_play_sound("assets/sounds/com.wav", 1.0f);
-    else if (strcmp(name, "Ind") == 0)  sound_play_sound("assets/sounds/ind.wav", 1.0f);
-    else if (strcmp(name, "Fire") == 0) sound_play_sound("assets/sounds/fire.wav", 1.0f);
-    else if (strcmp(name, "Pol") == 0)  sound_play_sound("assets/sounds/police.wav", 1.0f);
-    else if (strcmp(name, "Stad") == 0) sound_play_sound("assets/sounds/stadium.wav", 1.0f);
-    else if (strcmp(name, "Coal") == 0) sound_play_sound("assets/sounds/coal.wav", 1.0f);
-    else if (strcmp(name, "Nuc") == 0)  sound_play_sound("assets/sounds/nuclear.wav", 1.0f);
-    else if (strcmp(name, "Seap") == 0) sound_play_sound("assets/sounds/seaport.wav", 1.0f);
-    else if (strcmp(name, "Airp") == 0) sound_play_sound("assets/sounds/airport.wav", 1.0f);
-    else if (strcmp(name, "Dozr") == 0) sound_play_sound("assets/sounds/bulldozer.wav", 0.9f);
-    else if (strcmp(name, "Qry") == 0)  sound_play_sound("assets/sounds/query.wav", 1.0f);
-    else                                sound_play_sound("assets/sounds/build.wav", 1.0f);
+    (void)x;
+    (void)y;
+    if (!name || !UserSoundOn) return;
+    static const struct { const char *name; const char *path; float vol; } sounds[] = {
+        { "Road", "assets/sounds/road.wav", 0.8f },
+        { "Rail", "assets/sounds/rail.wav", 0.8f },
+        { "Wire", "assets/sounds/wire.wav", 0.8f },
+        { "Park", "assets/sounds/park.wav", 0.8f },
+        { "Res",  "assets/sounds/res.wav", 1.0f },
+        { "Com",  "assets/sounds/com.wav", 1.0f },
+        { "Ind",  "assets/sounds/ind.wav", 1.0f },
+        { "Fire", "assets/sounds/fire.wav", 1.0f },
+        { "Pol",  "assets/sounds/police.wav", 1.0f },
+        { "Stad", "assets/sounds/stadium.wav", 1.0f },
+        { "Coal", "assets/sounds/coal.wav", 1.0f },
+        { "Nuc",  "assets/sounds/nuclear.wav", 1.0f },
+        { "Seap", "assets/sounds/seaport.wav", 1.0f },
+        { "Airp", "assets/sounds/airport.wav", 1.0f },
+        { "Dozr", "assets/sounds/bulldozer.wav", 0.7f },
+        { "Qry",  "assets/sounds/query.wav", 0.8f },
+    };
+    for (size_t i = 0; i < sizeof(sounds) / sizeof(sounds[0]); i++) {
+        if (strcmp(name, sounds[i].name) == 0) {
+            sound_play_sound(sounds[i].path, sounds[i].vol);
+            return;
+        }
+    }
 }
 
-static void micropolis_ensure_init(void)
+/* ------------------------------------------------------------------------ */
+/* Lifecycle                                                                 */
+
+bool game_has_city(void)
+{
+    return s_city_loaded;
+}
+
+static void reset_view(void)
+{
+    s_city_loaded = true;
+    G.mode = MODE_PLAY;
+    G.zoom = 16;
+    game_center_on(CITY_W / 2, CITY_H / 2);
+    s_ticker_t = 0.0f;
+    s_pending_notice = 0;
+    HaveLastMessage = 0;
+    mapview_invalidate();
+}
+
+void game_ensure_init(void)
 {
     if (s_initialized) return;
 
-    /* 1. Setup Sim UI Callbacks */
     g_sim_ui_callbacks.on_auto_goto = cb_on_auto_goto;
     g_sim_ui_callbacks.on_show_notice = cb_on_show_notice;
     g_sim_ui_callbacks.on_budget_modal = cb_on_budget_modal;
     g_sim_ui_callbacks.on_show_zone_status = cb_on_show_zone_status;
     g_sim_ui_callbacks.on_did_tool = cb_on_did_tool;
 
-    /* 2. Initialize simulation memory and globals */
     initMapArrays();
     sim = MakeNewSim();
     if (sim) {
         sim->editor = MakeNewView();
         if (sim->editor) {
-            sim->editor->w_width = 400;
-            sim->editor->w_height = 240;
+            sim->editor->w_width = SCREEN_W;
+            sim->editor->w_height = SCREEN_H;
             sim->editor->tool_state = roadState;
         }
     }
     InitWillStuff();
     InitGame();
+    StartingYear = 1900;
+    autoBulldoze = 1;
 
-    /* 3. Initialize graphical renderer */
-    sim_render_init();
-
-    /* 4. Default viewport position */
-    g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
-    g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
-    g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
-    g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
-    g_sim_viewport.tool_size = s_tools[s_tool_index].size;
-
-    SimSpeed = 2;
+    ui_init();
+    mapview_init();
     s_initialized = true;
+}
+
+static const char *s_city_names[] = {
+    "Micropolis", "Port Crank", "New Wright", "Hopkinsville", "Maxis Falls",
+    "Bit Harbor", "Pixelton", "Yellow Bay", "Duskwood", "Riverside",
+    "Cedar Point", "Ashford", "Glen Haven", "Larkspur", "Oakmont",
+};
+
+const char *game_random_city_name(int seed)
+{
+    int n = (int)(sizeof(s_city_names) / sizeof(s_city_names[0]));
+    return s_city_names[(unsigned)seed % (unsigned)n];
+}
+
+void game_load_backdrop(void)
+{
+    game_ensure_init();
+    if (!LoadEmbeddedCity("about.cty")) GenerateNewCity();
+    mapview_invalidate();
+    s_city_loaded = true;
+}
+
+void game_generate_terrain(int seed)
+{
+    game_ensure_init();
+    s_new_seed = seed;
+    GenerateSomeCity(seed);
+    mapview_invalidate();
+    s_city_loaded = true;
 }
 
 void game_start_new_city(int difficulty)
 {
-    micropolis_ensure_init();
-    GenerateSomeCity((int)Rand16());
-    setCityName("Micropolis");
+    game_ensure_init();
+    setAnyCityName((char *)game_random_city_name(s_new_seed)); /* keep spaces */
     StartupGameLevel = (difficulty >= 0 && difficulty <= 2) ? difficulty : 0;
     SetGameLevelFunds(StartupGameLevel);
     CityTime = 0;
-    setSpeed(2);
-    SimSpeed = 2;
-
-    g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
-    g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
-    g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
-    g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
-    s_game_mode = MODE_PLAY;
-    show_toast("Welcome Mayor! Build your city.", 3.5f);
+    CityTax = 7;
+    roadPercent = policePercent = firePercent = 1.0f;
+    reset_view();
+    game_set_speed(2);
+    game_show_message("Zone some land and connect it with roads.", ICON_RESIDENTIAL);
 }
 
 void game_start_scenario(int scenario_id)
 {
-    micropolis_ensure_init();
-    LoadScenario(scenario_id);
-
-    g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
-    g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
-    g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
-    g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
-    s_game_mode = MODE_PLAY;
-
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Scenario: %s", CityName ? CityName : "City");
-    show_toast(buf, 3.5f);
+    game_ensure_init();
+    LoadScenario((short)scenario_id);
+    reset_view();
+    game_set_speed(2);
 }
 
 void game_start_embedded_city(const char *name)
 {
-    micropolis_ensure_init();
-    if (!LoadEmbeddedCity((char*)name)) {
-        GenerateNewCity();
-    }
-
-    g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
-    g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
-    g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
-    g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
-    s_game_mode = MODE_PLAY;
-    show_toast("Loaded City", 3.0f);
+    game_ensure_init();
+    if (!LoadEmbeddedCity((char *)name)) GenerateNewCity();
+    reset_view();
+    game_set_speed(2);
 }
 
 int game_save_slot(int slot)
 {
-    micropolis_ensure_init();
+    game_ensure_init();
     if (!city_save_slot(slot)) {
-        show_toast("Failed to Save City!", 2.5f);
+        game_show_message("Couldn't save the city.", ICON_ALERT);
         return 0;
     }
     char buf[64];
-    snprintf(buf, sizeof(buf), "Saved Slot %d: %s", slot, CityName ? CityName : "City");
-    show_toast(buf, 2.5f);
+    snprintf(buf, sizeof(buf), "Saved %s to slot %d.", CityName ? CityName : "city", slot);
+    game_show_message(buf, ICON_GAME);
     return 1;
 }
 
 int game_load_slot(int slot)
 {
-    micropolis_ensure_init();
-    if (!city_load_slot(slot)) {
-        show_toast("Failed to Load City!", 2.5f);
-        return 0;
-    }
-    g_sim_viewport.cam_x = (SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w) / 2;
-    g_sim_viewport.cam_y = (SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h) / 2;
-    g_sim_viewport.cursor_x = g_sim_viewport.cam_x / SIM_TILE_SIZE + 12;
-    g_sim_viewport.cursor_y = g_sim_viewport.cam_y / SIM_TILE_SIZE + 7;
-    s_game_mode = MODE_PLAY;
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Loaded Slot %d: %s", slot, CityName ? CityName : "City");
-    show_toast(buf, 3.0f);
+    game_ensure_init();
+    if (!city_load_slot(slot)) return 0;
+    reset_view();
+    game_set_speed(2);
     return 1;
 }
 
-void game_open_budget(void)
+#define AUTOSAVE_FILE "autosave.cty"
+
+bool game_has_autosave(void)
 {
-    micropolis_ensure_init();
-    open_budget_modal();
+    city_meta_t meta;
+    return city_read_meta(AUTOSAVE_FILE, &meta) && meta.exists;
 }
 
-void game_open_eval(void)
+bool game_autosave_meta(char *name, int name_len, int *year, long *pop)
 {
-    micropolis_ensure_init();
-    open_eval_modal();
+    city_meta_t meta;
+    if (!city_read_meta(AUTOSAVE_FILE, &meta) || !meta.exists) return false;
+    if (name) snprintf(name, (size_t)name_len, "%s", meta.name);
+    if (year) *year = meta.year;
+    if (pop) *pop = meta.population;
+    return true;
 }
 
-void game_open_system_menu(void)
+void game_autosave(void)
 {
-    micropolis_ensure_init();
-    open_system_menu();
+    if (!s_initialized || scene_get_current() != game_get_scene()) return;
+    SaveCityAs(AUTOSAVE_FILE);
 }
 
-static void micropolis_scene_init(scene_t *self)
+bool game_continue(void)
+{
+    game_ensure_init();
+    if (!LoadCity(AUTOSAVE_FILE)) return false;
+    reset_view();
+    game_set_speed(2);
+    return true;
+}
+
+void game_open_budget(void) { game_ensure_init(); budget_open(); }
+void game_open_eval(void) { game_ensure_init(); report_open(); }
+void game_open_system_menu(void) { game_ensure_init(); menu_open_game(); }
+
+/* System menu callbacks: just record, handled in update */
+static void sysmenu_speed_cb(void *ud)
+{
+    (void)ud;
+    game_set_speed(platform_menu_get_value(s_menu_speed));
+}
+
+static void sysmenu_zoom_cb(void *ud)
+{
+    (void)ud;
+    game_set_zoom(platform_menu_get_value(s_menu_zoom) == 0 ? 16 : 8);
+}
+
+static void sysmenu_game_cb(void *ud)
+{
+    (void)ud;
+    s_menu_open_game = true;
+}
+
+static void game_scene_init(scene_t *self)
 {
     (void)self;
-    micropolis_ensure_init();
+    game_ensure_init();
     sim_input_init();
+    G.time = 0.0f;
 
-    /* If no city loaded yet, default to example city */
-    if (TotalFunds == 0 && CityTime == 0) {
-        if (!LoadEmbeddedCity("about.cty")) {
-            GenerateNewCity();
-        }
+    static const char *speeds[] = { "pause", "slow", "normal", "fast" };
+    static const char *zooms[] = { "near", "far" };
+    platform_menu_clear();
+    s_menu_speed = platform_menu_add_options("speed", speeds, 4, sysmenu_speed_cb, NULL);
+    s_menu_zoom = platform_menu_add_options("zoom", zooms, 2, sysmenu_zoom_cb, NULL);
+    platform_menu_add_item("city menu", sysmenu_game_cb, NULL);
+    platform_menu_set_value(s_menu_speed, SimSpeed);
+    platform_menu_set_value(s_menu_zoom, G.zoom == 16 ? 0 : 1);
+
+    /* Nothing loaded yet (shouldn't happen from the title, but be safe) */
+    if (!s_city_loaded) {
+        if (!LoadEmbeddedCity("about.cty")) GenerateNewCity();
+        reset_view();
     }
 }
 
-static void update_modal_budget(void)
+static void game_scene_cleanup(scene_t *self)
 {
-    if (sim_action_pressed(SIM_ACT_UP)) {
-        s_budget_modal.selected_item = (s_budget_modal.selected_item + 4) % 5;
-    }
-    if (sim_action_pressed(SIM_ACT_DOWN)) {
-        s_budget_modal.selected_item = (s_budget_modal.selected_item + 1) % 5;
-    }
-
-    int change = 0;
-    if (sim_action_pressed(SIM_ACT_LEFT)) change -= 1;
-    if (sim_action_pressed(SIM_ACT_RIGHT)) change += 1;
-
-    if (change != 0) {
-        switch (s_budget_modal.selected_item) {
-        case 0: /* Tax */
-            s_budget_modal.tax_rate += change;
-            if (s_budget_modal.tax_rate < 0) s_budget_modal.tax_rate = 0;
-            if (s_budget_modal.tax_rate > 20) s_budget_modal.tax_rate = 20;
-            CityTax = s_budget_modal.tax_rate;
-            break;
-        case 1: /* Road */
-            s_budget_modal.road_fund += change * 10;
-            if (s_budget_modal.road_fund < 0) s_budget_modal.road_fund = 0;
-            if (s_budget_modal.road_fund > 100) s_budget_modal.road_fund = 100;
-            roadPercent = s_budget_modal.road_fund / 100.0f;
-            break;
-        case 2: /* Police */
-            s_budget_modal.police_fund += change * 10;
-            if (s_budget_modal.police_fund < 0) s_budget_modal.police_fund = 0;
-            if (s_budget_modal.police_fund > 100) s_budget_modal.police_fund = 100;
-            policePercent = s_budget_modal.police_fund / 100.0f;
-            break;
-        case 3: /* Fire */
-            s_budget_modal.fire_fund += change * 10;
-            if (s_budget_modal.fire_fund < 0) s_budget_modal.fire_fund = 0;
-            if (s_budget_modal.fire_fund > 100) s_budget_modal.fire_fund = 100;
-            firePercent = s_budget_modal.fire_fund / 100.0f;
-            break;
-        default: break;
-        }
-
-        /* Update costs */
-        s_budget_modal.tax_revenue = (TotalPop > 0) ? (TotalPop * CityTax * 5) : 0;
-        s_budget_modal.road_cost = (long)(RoadFund * (s_budget_modal.road_fund / 100.0f));
-        s_budget_modal.police_cost = (long)(PoliceFund * (s_budget_modal.police_fund / 100.0f));
-        s_budget_modal.fire_cost = (long)(FireFund * (s_budget_modal.fire_fund / 100.0f));
-    }
-
-    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
-        if (s_budget_modal.selected_item == 4) {
-            s_game_mode = MODE_PLAY;
-            show_toast("Budget Confirmed", 2.0f);
-        }
-    }
-    if (sim_action_pressed(SIM_ACT_SECONDARY)) {
-        s_game_mode = MODE_PLAY;
-    }
+    (void)self;
+    platform_menu_clear();
+    s_menu_speed = s_menu_zoom = -1;
 }
 
-static void update_modal_menu(int menu_type)
-{
-    /* Mouse Hover / Click for modal items */
-    const sim_mouse_t *m = sim_input_get_mouse();
-    int item_h = 16;
-    int w = 240;
-    int h = 40 + s_menu_modal.item_count * item_h;
-    int cx = g_sim_viewport.view_w / 2;
-    int cy = g_sim_viewport.view_h / 2;
-    int pos_x = cx - w / 2;
-    int pos_y = cy - h / 2;
-    for (int i = 0; i < s_menu_modal.item_count; i++) {
-        int ry = pos_y + 26 + i * item_h;
-        if (m->pos.x >= pos_x + 6 && m->pos.x <= pos_x + w - 6 &&
-            m->pos.y >= ry - 2 && m->pos.y < ry + item_h - 2) {
-            if (s_menu_modal.selected_index != i) {
-                s_menu_modal.selected_index = i;
-            }
-            if (m->left_pressed) {
-                sim_input_trigger_action(SIM_ACT_PRIMARY);
-            }
-        }
-    }
+/* ------------------------------------------------------------------------ */
+/* Map view: building                                                        */
 
-    if (sim_action_pressed(SIM_ACT_UP)) {
-        s_menu_modal.selected_index = (s_menu_modal.selected_index + s_menu_modal.item_count - 1) % s_menu_modal.item_count;
-        sound_play_sound("assets/sounds/button.wav", 0.7f);
-    }
-    if (sim_action_pressed(SIM_ACT_DOWN)) {
-        s_menu_modal.selected_index = (s_menu_modal.selected_index + 1) % s_menu_modal.item_count;
-        sound_play_sound("assets/sounds/button.wav", 0.7f);
-    }
-    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
-        int sel = s_menu_modal.selected_index;
-        sound_play_sound("assets/sounds/button.wav", 0.9f);
-
-        if (menu_type == 0) { /* Disasters */
-            s_game_mode = MODE_PLAY;
-            if (sel < 6) trigger_disaster(sel);
-        } else if (menu_type == 1) { /* Scenarios */
-            s_game_mode = MODE_PLAY;
-            if (sel < 8) trigger_scenario(sel);
-        } else if (menu_type == 2) { /* System Menu */
-            switch (sel) {
-            case 0: /* Resume */
-                s_game_mode = MODE_PLAY;
-                break;
-            case 1: /* Budget */
-                open_budget_modal();
-                break;
-            case 2: /* Evaluation */
-                open_eval_modal();
-                break;
-            case 3: /* Disasters */
-                open_disasters_menu();
-                break;
-            case 4: /* Scenarios */
-                open_scenarios_menu();
-                break;
-            case 5: /* Save City to Slot */
-                open_save_slots_menu();
-                break;
-            case 6: /* Load City from Slot */
-                open_load_slots_menu();
-                break;
-            case 7: /* Cycle Overlay */
-                g_sim_viewport.overlay = (g_sim_viewport.overlay + 1) % OVERLAY_COUNT;
-                s_game_mode = MODE_PLAY;
-                show_toast("Overlay Changed", 1.5f);
-                break;
-            case 8: /* Toggle Minimap */
-                g_sim_viewport.show_minimap = !g_sim_viewport.show_minimap;
-                s_game_mode = MODE_PLAY;
-                show_toast(g_sim_viewport.show_minimap ? "Minimap ON" : "Minimap OFF", 1.5f);
-                break;
-            case 9: /* Speed */
-                SimSpeed = (SimSpeed + 1) % 4;
-                s_game_mode = MODE_PLAY;
-                {
-                    const char *spd_names[] = { "PAUSED", "SLOW", "NORMAL", "FAST" };
-                    show_toast(spd_names[SimSpeed], 1.5f);
-                }
-                break;
-            case 10: /* Quit to Main Menu */
-                scene_set(scene_title_create());
-                break;
-            default:
-                s_game_mode = MODE_PLAY;
-                break;
-            }
-        } else if (menu_type == 3) { /* Save Slots */
-            if (sel < 4) {
-                game_save_slot(sel + 1);
-                s_game_mode = MODE_PLAY;
-            } else {
-                open_system_menu();
-            }
-        } else if (menu_type == 4) { /* Load Slots */
-            if (sel < 4) {
-                city_meta_t meta;
-                if (city_get_slot_meta(sel + 1, &meta) && meta.exists) {
-                    game_load_slot(sel + 1);
-                    s_game_mode = MODE_PLAY;
-                } else {
-                    sound_play_sound("assets/sounds/uh-uh.wav", 1.0f);
-                    show_toast("Slot is Empty!", 1.5f);
-                }
-            } else {
-                open_system_menu();
-            }
-        }
-    }
-    if (sim_action_pressed(SIM_ACT_SECONDARY)) {
-        if (menu_type == 3 || menu_type == 4) {
-            open_system_menu();
-        } else {
-            s_game_mode = MODE_PLAY;
-        }
-    }
-}
-
-static void apply_current_tool(int tx, int ty)
+static void apply_tool(int cx, int cy, bool dragging)
 {
     if (!sim || !sim->editor) return;
-    int place_x = tx;
-    int place_y = ty;
-    if (g_sim_viewport.tool_size > 1) {
-        place_x += 1;
-        place_y += 1;
-    }
-    DoTool(sim->editor, s_current_tool, place_x, place_y);
-}
+    const tool_def_t *t = &g_tools[G.tool];
+    int off = t->size > 1 ? 1 : 0;
+    long before = TotalFunds;
+    int res = DoTool(sim->editor, (short)t->state, (short)(cx + off), (short)(cy + off));
 
-static void micropolis_scene_update(scene_t *self, float dt)
-{
-    (void)self;
-
-    /* Update sim input manager */
-    sim_input_poll(dt);
-
-    /* Update toast timer */
-    if (s_toast_timer > 0.0f) {
-        s_toast_timer -= dt;
-    }
-    if (s_palette_timer > 0.0f) {
-        s_palette_timer -= dt;
-    }
-
-    /* Simulation ticker message check */
-    if (HaveLastMessage) {
-        show_toast(LastMessage, 3.5f);
-        HaveLastMessage = 0;
-    }
-
-    /* Handle Modal Dialogs */
-    if (s_game_mode == MODE_BUDGET) {
-        update_modal_budget();
-        return;
-    }
-    if (s_game_mode == MODE_DISASTERS) {
-        update_modal_menu(0);
-        return;
-    }
-    if (s_game_mode == MODE_SCENARIOS) {
-        update_modal_menu(1);
-        return;
-    }
-    if (s_game_mode == MODE_MENU) {
-        update_modal_menu(2);
-        return;
-    }
-    if (s_game_mode == MODE_SAVE_SLOTS) {
-        update_modal_menu(3);
-        return;
-    }
-    if (s_game_mode == MODE_LOAD_SLOTS) {
-        update_modal_menu(4);
-        return;
-    }
-    if (s_game_mode == MODE_QUERY || s_game_mode == MODE_EVAL) {
-        if (sim_action_pressed(SIM_ACT_PRIMARY) || sim_action_pressed(SIM_ACT_SECONDARY)) {
-            s_game_mode = MODE_PLAY;
-            s_query_info.active = false;
+    if (res == -1 || res == -2) {
+        ClearMes(); /* we report it ourselves */
+        if (!dragging) {
+            ui_sound(UI_SND_ERROR);
+            s_error_flash = 0.4f;
+            if (res == -1) game_show_message("Clear the land first (use the Bulldozer).", ICON_BULLDOZER);
+            else game_show_message("Not enough money for that.", ICON_BUDGET);
         }
         return;
     }
-
-    /* ---- MODE_PLAY: Standard Controls & Navigation ---- */
-
-    /* 1. System Menu Trigger */
-    if (sim_action_pressed(SIM_ACT_MENU)) {
-        open_system_menu();
-        return;
+    long spent = before - TotalFunds;
+    if (spent > 0) {
+        char buf[16];
+        if (dragging && s_drag_floater >= 0 && s_floaters[s_drag_floater].t > 0.0f) {
+            /* One running total that follows the cursor while drag-building */
+            s_drag_spent += spent;
+            floater_t *f = &s_floaters[s_drag_floater];
+            ui_fmt_money(f->text, sizeof(f->text), -s_drag_spent);
+            f->tx = cx + t->size / 2;
+            f->ty = cy;
+            f->t = 0.9f;
+        } else {
+            s_drag_spent = spent;
+            ui_fmt_money(buf, sizeof(buf), -spent);
+            add_floater(buf, cx + t->size / 2, cy);
+        }
     }
+}
 
-    /* 2. Tool Cycling (Crank / Shoulder buttons / PageUp / PageDown / Brackets) */
-    if (sim_action_pressed(SIM_ACT_NEXT_TOOL)) {
-        select_tool((s_tool_index + 1) % TOOL_COUNT);
+static void move_cursor(int dx, int dy, bool building)
+{
+    const tool_def_t *t = &g_tools[G.tool];
+    int step = (building && t->size > 1) ? t->size : 1;
+
+    int nx = G.cur_x + dx * step;
+    int ny = G.cur_y + dy * step;
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+    if (nx > CITY_W - t->size) nx = CITY_W - t->size;
+    if (ny > CITY_H - t->size) ny = CITY_H - t->size;
+    if (nx == G.cur_x && ny == G.cur_y) return;
+
+    /* Diagonal drag with a network tool: lay the corner so it stays connected */
+    if (building && t->size == 1 && nx != G.cur_x && ny != G.cur_y) {
+        apply_tool(nx, G.cur_y, true);
     }
-    if (sim_action_pressed(SIM_ACT_PREV_TOOL)) {
-        select_tool((s_tool_index + TOOL_COUNT - 1) % TOOL_COUNT);
-    }
+    G.cur_x = nx;
+    G.cur_y = ny;
+    if (building) apply_tool(G.cur_x, G.cur_y, true);
+}
 
-    /* 3. Direct Tool Hotkeys */
-    if (sim_action_pressed(SIM_ACT_TOOL_ROAD))   select_tool(0);
-    if (sim_action_pressed(SIM_ACT_TOOL_WIRE))   select_tool(1);
-    if (sim_action_pressed(SIM_ACT_TOOL_DOZER))  select_tool(2);
-    if (sim_action_pressed(SIM_ACT_TOOL_RES))    select_tool(3);
-    if (sim_action_pressed(SIM_ACT_TOOL_COM))    select_tool(4);
-    if (sim_action_pressed(SIM_ACT_TOOL_IND))    select_tool(5);
-    if (sim_action_pressed(SIM_ACT_TOOL_FIRE))   select_tool(6);
-    if (sim_action_pressed(SIM_ACT_TOOL_POLICE)) select_tool(7);
-    if (sim_action_pressed(SIM_ACT_TOOL_STAD))   select_tool(8);
-    if (sim_action_pressed(SIM_ACT_TOOL_PARK))   select_tool(9);
-    if (sim_action_pressed(SIM_ACT_TOOL_PORT))   select_tool(10);
-    if (sim_action_pressed(SIM_ACT_TOOL_COAL))   select_tool(11);
-    if (sim_action_pressed(SIM_ACT_TOOL_NUKE))   select_tool(12);
-    if (sim_action_pressed(SIM_ACT_TOOL_AIR))    select_tool(13);
-    if (sim_action_pressed(SIM_ACT_TOOL_QUERY))  select_tool(14);
-
-    /* 4. Modal Menu Hotkeys */
-    if (sim_action_pressed(SIM_ACT_BUDGET))    open_budget_modal();
-    if (sim_action_pressed(SIM_ACT_EVAL))      open_eval_modal();
-    if (sim_action_pressed(SIM_ACT_DISASTERS)) open_disasters_menu();
-    if (sim_action_pressed(SIM_ACT_SCENARIOS)) open_scenarios_menu();
-
-    /* 5. Speed Controls */
-    if (sim_action_pressed(SIM_ACT_SPEED_PAUSE)) { SimSpeed = 0; setSpeed(0); show_toast("PAUSED", 1.5f); }
-    if (sim_action_pressed(SIM_ACT_SPEED_SLOW))  { SimSpeed = 1; setSpeed(1); show_toast("SLOW", 1.5f); }
-    if (sim_action_pressed(SIM_ACT_SPEED_NORM))  { SimSpeed = 2; setSpeed(2); show_toast("NORMAL", 1.5f); }
-    if (sim_action_pressed(SIM_ACT_SPEED_FAST))  { SimSpeed = 3; setSpeed(3); show_toast("FAST", 1.5f); }
-    if (sim_action_pressed(SIM_ACT_SPEED)) {
-        SimSpeed = (SimSpeed + 1) % 4;
-        setSpeed(SimSpeed);
-        const char *spd_names[] = { "PAUSED", "SLOW", "NORMAL", "FAST" };
-        show_toast(spd_names[SimSpeed], 1.5f);
-    }
-
-    /* 6. Toggles: Minimap & Overlay */
-    if (sim_action_pressed(SIM_ACT_MINIMAP)) {
-        g_sim_viewport.show_minimap = !g_sim_viewport.show_minimap;
-    }
-    if (sim_action_pressed(SIM_ACT_OVERLAY)) {
-        g_sim_viewport.overlay = (g_sim_viewport.overlay + 1) % OVERLAY_COUNT;
-    }
-
-    /* 7. D-Pad Cursor Navigation with Hold Acceleration */
+static void update_cursor(float dt)
+{
     int dx = 0, dy = 0;
-    if (sim_action_held(SIM_ACT_LEFT))  dx -= 1;
+    if (sim_action_held(SIM_ACT_LEFT)) dx -= 1;
     if (sim_action_held(SIM_ACT_RIGHT)) dx += 1;
-    if (sim_action_held(SIM_ACT_UP))    dy -= 1;
-    if (sim_action_held(SIM_ACT_DOWN))  dy += 1;
+    if (sim_action_held(SIM_ACT_UP)) dy -= 1;
+    if (sim_action_held(SIM_ACT_DOWN)) dy += 1;
 
     bool moved = false;
-    if (dx != 0 || dy != 0) {
-        if (sim_action_pressed(SIM_ACT_LEFT) || sim_action_pressed(SIM_ACT_RIGHT) ||
-            sim_action_pressed(SIM_ACT_UP) || sim_action_pressed(SIM_ACT_DOWN) ||
-            dx != s_last_dx || dy != s_last_dy) {
+    if (dx || dy) {
+        bool fresh = sim_action_pressed(SIM_ACT_LEFT) || sim_action_pressed(SIM_ACT_RIGHT) ||
+                     sim_action_pressed(SIM_ACT_UP) || sim_action_pressed(SIM_ACT_DOWN);
+        if (fresh || dx != s_last_dx || dy != s_last_dy) {
             moved = true;
-            s_key_held_time = 0.0f;
-            s_repeat_timer = 0.22f;
+            s_move_held = 0.0f;
+            s_move_timer = 0.20f;
         } else {
-            s_key_held_time += dt;
-            s_repeat_timer -= dt;
-            if (s_repeat_timer <= 0.0f) {
+            s_move_held += dt;
+            s_move_timer -= dt;
+            if (s_move_timer <= 0.0f) {
                 moved = true;
-                s_repeat_timer = (s_key_held_time > 1.2f) ? 0.04f : 0.09f;
+                /* Accelerate the longer the pad is held; faster when zoomed out */
+                float rate = s_move_held > 1.0f ? 0.030f : (s_move_held > 0.4f ? 0.055f : 0.085f);
+                if (G.zoom == 8) rate *= 0.8f;
+                s_move_timer += rate;
+                if (s_move_timer < 0.0f) s_move_timer = 0.0f;
             }
         }
     } else {
-        s_key_held_time = 0.0f;
-        s_repeat_timer = 0.0f;
+        s_move_held = 0.0f;
+        s_move_timer = 0.0f;
     }
     s_last_dx = dx;
     s_last_dy = dy;
 
-    if (moved) {
-        g_sim_viewport.cursor_x += dx;
-        g_sim_viewport.cursor_y += dy;
+    if (moved) move_cursor(dx, dy, sim_action_held(SIM_ACT_PRIMARY));
+}
 
-        /* Clamp cursor */
-        int max_tx = SIM_MAP_WIDTH - g_sim_viewport.tool_size;
-        int max_ty = SIM_MAP_HEIGHT - g_sim_viewport.tool_size;
-        if (g_sim_viewport.cursor_x < 0) g_sim_viewport.cursor_x = 0;
-        if (g_sim_viewport.cursor_y < 0) g_sim_viewport.cursor_y = 0;
-        if (g_sim_viewport.cursor_x > max_tx) g_sim_viewport.cursor_x = max_tx;
-        if (g_sim_viewport.cursor_y > max_ty) g_sim_viewport.cursor_y = max_ty;
+static void update_camera(float dt)
+{
+    const tool_def_t *t = &g_tools[G.tool];
+    int z = G.zoom;
+    float px = (float)(G.cur_x * z), py = (float)(G.cur_y * z);
+    float pw = (float)(t->size * z), ph = (float)(t->size * z);
+    float margin = (float)(z == 16 ? 48 : 32);
 
-        /* Smooth camera edge following */
-        int cur_px = g_sim_viewport.cursor_x * SIM_TILE_SIZE;
-        int cur_py = g_sim_viewport.cursor_y * SIM_TILE_SIZE;
-        int margin = 32;
+    float tx = G.cam_x, ty = G.cam_y;
+    if (px - margin < tx) tx = px - margin;
+    if (px + pw + margin > tx + SCREEN_W) tx = px + pw + margin - SCREEN_W;
+    if (py - margin < ty + TOP_BAR_H) ty = py - margin - TOP_BAR_H;
+    if (py + ph + margin > ty + SCREEN_H - BOTTOM_BAR_H) ty = py + ph + margin - SCREEN_H + BOTTOM_BAR_H;
+    clamp_camera(&tx, &ty);
 
-        if (cur_px < g_sim_viewport.cam_x + margin) {
-            g_sim_viewport.cam_x = cur_px - margin;
-        }
-        if (cur_px + g_sim_viewport.tool_size * SIM_TILE_SIZE > g_sim_viewport.cam_x + g_sim_viewport.view_w - margin) {
-            g_sim_viewport.cam_x = cur_px + g_sim_viewport.tool_size * SIM_TILE_SIZE - g_sim_viewport.view_w + margin;
-        }
-        if (cur_py < g_sim_viewport.cam_y + margin) {
-            g_sim_viewport.cam_y = cur_py - margin;
-        }
-        if (cur_py + g_sim_viewport.tool_size * SIM_TILE_SIZE > g_sim_viewport.cam_y + g_sim_viewport.view_h - margin) {
-            g_sim_viewport.cam_y = cur_py + g_sim_viewport.tool_size * SIM_TILE_SIZE - g_sim_viewport.view_h + margin;
-        }
+    float k = dt * 14.0f;
+    if (k > 1.0f) k = 1.0f;
+    G.cam_x += (tx - G.cam_x) * k;
+    G.cam_y += (ty - G.cam_y) * k;
+    if (abs((int)(tx - G.cam_x)) < 1) G.cam_x = tx;
+    if (abs((int)(ty - G.cam_y)) < 1) G.cam_y = ty;
+}
 
-        /* Continuous drag placement with A button */
-        if (sim_action_held(SIM_ACT_PRIMARY)) {
-            apply_current_tool(g_sim_viewport.cursor_x, g_sim_viewport.cursor_y);
-        }
+static void update_play(float dt)
+{
+    /* Crank: zoom with a firm detent */
+    s_zoom_accum += input_crank();
+    if (s_zoom_accum > 50.0f) {
+        game_set_zoom(8);
+        s_zoom_accum = 0.0f;
+    } else if (s_zoom_accum < -50.0f) {
+        game_set_zoom(16);
+        s_zoom_accum = 0.0f;
     }
 
-    /* 8. Mouse Support & Click Targets */
-    const sim_mouse_t *m = sim_input_get_mouse();
-    if (m) {
-        /* Right Click: inspect tile under mouse */
-        if (m->right_pressed) {
-            int tx = (g_sim_viewport.cam_x + m->pos.x) / SIM_TILE_SIZE;
-            int ty = (g_sim_viewport.cam_y + m->pos.y) / SIM_TILE_SIZE;
-            if (tx >= 0 && tx < SIM_MAP_WIDTH && ty >= 0 && ty < SIM_MAP_HEIGHT) {
-                if (sim && sim->editor) {
-                    DoTool(sim->editor, queryState, tx, ty);
-                }
-            }
-        }
-
-        /* Left Click on Interactive UI Targets */
-        if (m->left_pressed) {
-            int tray_tool = -1;
-            vec2i_t target_tile = {0, 0};
-
-            /* Tool Tray Click */
-            if (sim_render_is_point_in_tool_tray(m->pos, &g_sim_viewport, &tray_tool)) {
-                select_tool(tray_tool);
-            }
-            /* Minimap Click */
-            else if (sim_render_is_point_in_minimap(m->pos, &g_sim_viewport, &target_tile)) {
-                g_sim_viewport.cam_x = target_tile.x * SIM_TILE_SIZE - g_sim_viewport.view_w / 2;
-                g_sim_viewport.cam_y = target_tile.y * SIM_TILE_SIZE - g_sim_viewport.view_h / 2;
-                g_sim_viewport.cursor_x = target_tile.x;
-                g_sim_viewport.cursor_y = target_tile.y;
-            }
-            /* Status Bar Click */
-            else if (m->pos.y < 16) {
-                if (m->pos.x >= g_sim_viewport.view_w - 70) {
-                    g_sim_viewport.overlay = (g_sim_viewport.overlay + 1) % OVERLAY_COUNT;
-                } else if (m->pos.x >= 140 && m->pos.x <= 230) {
-                    open_budget_modal();
-                } else if (m->pos.x >= 280 && m->pos.x <= 340) {
-                    SimSpeed = (SimSpeed + 1) % 4;
-                    setSpeed(SimSpeed);
-                }
-            }
-        }
-
-        /* Mouse Move & Continuous Drag Building on Map Canvas */
-        if (m->pos.y >= 16 && m->pos.y < 220 && m->pos.x >= 0 && m->pos.x < g_sim_viewport.view_w) {
-            int m_tx = (g_sim_viewport.cam_x + m->pos.x) / SIM_TILE_SIZE;
-            int m_ty = (g_sim_viewport.cam_y + m->pos.y) / SIM_TILE_SIZE;
-
-            if (m_tx >= 0 && m_tx < SIM_MAP_WIDTH && m_ty >= 0 && m_ty < SIM_MAP_HEIGHT) {
-                g_sim_viewport.cursor_x = m_tx;
-                g_sim_viewport.cursor_y = m_ty;
-
-                if (m->left_down) {
-                    if (m_tx != s_last_drag_tx || m_ty != s_last_drag_ty) {
-                        apply_current_tool(m_tx, m_ty);
-                        s_last_drag_tx = m_tx;
-                        s_last_drag_ty = m_ty;
-                    }
-                } else {
-                    s_last_drag_tx = -1;
-                    s_last_drag_ty = -1;
-                }
-            }
-        }
-    }
-
-    /* 9. Action Button Single Presses */
-    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
-        apply_current_tool(g_sim_viewport.cursor_x, g_sim_viewport.cursor_y);
-    }
     if (sim_action_pressed(SIM_ACT_SECONDARY)) {
-        if (sim && sim->editor) {
-            DoTool(sim->editor, queryState, g_sim_viewport.cursor_x, g_sim_viewport.cursor_y);
-        }
+        build_open();
+        return;
     }
 
-    /* Clamp camera to world boundary */
-    int max_cam_x = SIM_MAP_WIDTH * SIM_TILE_SIZE - g_sim_viewport.view_w;
-    int max_cam_y = SIM_MAP_HEIGHT * SIM_TILE_SIZE - g_sim_viewport.view_h;
-    if (g_sim_viewport.cam_x < 0) g_sim_viewport.cam_x = 0;
-    if (g_sim_viewport.cam_y < 0) g_sim_viewport.cam_y = 0;
-    if (g_sim_viewport.cam_x > max_cam_x) g_sim_viewport.cam_x = max_cam_x;
-    if (g_sim_viewport.cam_y > max_cam_y) g_sim_viewport.cam_y = max_cam_y;
+    update_cursor(dt);
 
-    /* 10. Blink Animation (~2 Hz) */
+    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
+        apply_tool(G.cur_x, G.cur_y, false);
+    }
+}
+
+static void tick_sim(float dt)
+{
     s_blink_accumulator += dt;
     if (s_blink_accumulator >= 0.25f) {
         s_blink_accumulator = 0.0f;
@@ -980,14 +692,9 @@ static void micropolis_scene_update(scene_t *self, float dt)
         animateTiles();
     }
 
-    /* 11. Simulation Timestep Execution (20 Hz fixed tick) */
     s_sim_accumulator += dt;
-    float sim_interval = 0.15f;
-    if (SimSpeed == 1) sim_interval = 0.30f;
-    if (SimSpeed == 2) sim_interval = 0.15f;
-    if (SimSpeed == 3) sim_interval = 0.05f;
-
-    if (SimSpeed > 0 && s_sim_accumulator >= sim_interval) {
+    float interval = SimSpeed == 1 ? 0.30f : (SimSpeed == 3 ? 0.05f : 0.15f);
+    if (SimSpeed > 0 && s_sim_accumulator >= interval) {
         s_sim_accumulator = 0.0f;
         SimFrame();
         MoveObjects();
@@ -996,128 +703,240 @@ static void micropolis_scene_update(scene_t *self, float dt)
     }
 }
 
-static void micropolis_scene_draw(scene_t *self)
+static void handle_sim_messages(void)
 {
-    (void)self;
-
-    /* 1. Clear frame */
-    render_clear(rgba(20, 20, 30, 255));
-
-    /* 2. Render visible map tiles */
-    sim_render_map(&g_sim_viewport);
-
-    /* 3. Render dynamic sprites (train, helicopter, ship, monster, etc.) */
-    sim_render_sprites(&g_sim_viewport);
-
-    /* 4. Render tool placement cursor in play mode */
-    if (s_game_mode == MODE_PLAY) {
-        sim_render_cursor(&g_sim_viewport);
-    }
-
-    /* 5. Render minimap overlay if enabled */
-    if (g_sim_viewport.show_minimap) {
-        vec2i_t m_pos = vec2i(g_sim_viewport.view_w - 68, 22);
-        vec2i_t m_size = vec2i(60, 50);
-        sim_render_minimap(m_pos, m_size, &g_sim_viewport);
-    }
-
-    /* 6. Render top HUD / status bar */
-    int current_year = CurrentYear();
-    int month = (int)(CityTime % 12);
-    sim_render_hud(&g_sim_viewport, CityName, TotalFunds,
-                   TotalPop * 100, current_year, month,
-                   s_tools[s_tool_index].name, SimSpeed);
-
-    /* 7. Render R/C/I Demand Valves */
-    sim_render_rci(vec2i(g_sim_viewport.view_w - 82, 2), RValve, CValve, IValve);
-
-    /* 8. Render bottom tool palette */
-    sim_render_tool_palette(&g_sim_viewport, s_tool_index, s_palette_timer > 0.0f);
-
-    /* 9. Render active modal dialogs */
-    vec2i_t center = vec2i(g_sim_viewport.view_w / 2, g_sim_viewport.view_h / 2);
-    if (s_game_mode == MODE_QUERY) {
-        sim_render_query_card(&s_query_info, center);
-    } else if (s_game_mode == MODE_BUDGET) {
-        sim_render_budget_modal(&s_budget_modal, center);
-    } else if (s_game_mode == MODE_EVAL) {
-        sim_render_eval_modal(&s_eval_modal, center);
-    } else if (s_game_mode == MODE_DISASTERS || s_game_mode == MODE_SCENARIOS ||
-               s_game_mode == MODE_MENU || s_game_mode == MODE_SAVE_SLOTS ||
-               s_game_mode == MODE_LOAD_SLOTS) {
-        sim_render_menu_modal(&s_menu_modal, center);
-    }
-
-    /* 10. Render floating toast notification */
-    if (s_toast_timer > 0.0f) {
-        float alpha = (s_toast_timer < 0.5f) ? (s_toast_timer / 0.5f) : 1.0f;
-        sim_render_toast(s_toast_msg, alpha, vec2i(g_sim_viewport.view_w, g_sim_viewport.view_h));
+    if (!HaveLastMessage) return;
+    HaveLastMessage = 0;
+    if (s_pending_notice) {
+        notice_open(s_pending_notice, LastMessage, s_pending_x, s_pending_y);
+        s_pending_notice = 0;
+        s_pending_x = s_pending_y = -1;
+    } else {
+        game_show_message(LastMessage, ICON_ALERT);
+        s_pending_x = s_pending_y = -1;
     }
 }
 
-static void micropolis_scene_cleanup(scene_t *self)
+static void game_scene_update(scene_t *self, float dt)
 {
     (void)self;
-    sim_render_cleanup();
-    s_initialized = false;
+    sim_input_poll(dt);
+    input_frame(dt);
+    G.time += dt;
+
+    if (s_menu_open_game) {
+        s_menu_open_game = false;
+        menu_open_game();
+    }
+
+    for (int i = 0; i < MAX_FLOATERS; i++)
+        if (s_floaters[i].t > 0.0f) s_floaters[i].t -= dt;
+    if (s_ticker_t > 0.0f) s_ticker_t -= dt;
+    if (s_error_flash > 0.0f) s_error_flash -= dt;
+
+    switch (G.mode) {
+    case MODE_PLAY:   update_play(dt); break;
+    case MODE_BUILD:  build_update(dt); break;
+    case MODE_BUDGET: budget_update(dt); break;
+    case MODE_REPORT: report_update(dt); break;
+    case MODE_MAP:    citymap_update(dt); break;
+    case MODE_MENU:   menu_update(dt); break;
+    case MODE_QUERY:  query_update(dt); break;
+    case MODE_NOTICE: notice_update(dt); break;
+    }
+
+    update_camera(dt);
+
+    /* The city keeps living only while you're looking at it */
+    if (G.mode == MODE_PLAY) {
+        tick_sim(dt);
+        handle_sim_messages();
+    }
 }
 
-static scene_vtab_t micropolis_scene_vtab = {
-    .init = micropolis_scene_init,
-    .update = micropolis_scene_update,
-    .draw = micropolis_scene_draw,
-    .cleanup = micropolis_scene_cleanup
+/* ------------------------------------------------------------------------ */
+/* Drawing                                                                   */
+
+static const char *s_month_names[12] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
-static scene_t micropolis_scene = {
-    .vtab = &micropolis_scene_vtab
+/* R/C/I demand: letter + framed well per zone type. The well fills from the
+ * bottom; the tick marks zero, so above it is demand and below it surplus.
+ * Each type keeps its own pattern (R solid, C checker, I stripes). */
+static void draw_rci(int x, int y)
+{
+    static const char *labels[3] = { "R", "C", "I" };
+    int vals[3] = { RValve * 7 / 2000, CValve * 7 / 1500, IValve * 7 / 1500 };
+    const int base = y + 15;
+    for (int i = 0; i < 3; i++) {
+        int lx = x + i * 16;
+        int bx = lx + 8;
+        int v = vals[i];
+        if (v > 7) v = 7;
+        if (v < -7) v = -7;
+        int level = v + 7; /* 0..14 */
+        ui_text(UI_FONT_BOLD, lx, y + 3, labels[i], FONT_ALIGN_LEFT, UI_WHITE);
+        ui_rect(bx - 1, y + 1, 8, 15, UI_WHITE);
+        for (int r = 0; r < level - 1; r++)
+            for (int c = 0; c < 6; c++) {
+                bool on = i == 0 || (i == 1 && ((c + r) & 1) == 0) || (i == 2 && (c & 1) == 0);
+                if (on) ui_fill(bx + c, base - 1 - r, 1, 1, UI_WHITE);
+            }
+        ui_fill(bx - 1, y + 8, 8, 1, UI_WHITE);
+    }
+}
+
+void hud_draw_top(void)
+{
+    ui_fill(0, 0, SCREEN_W, TOP_BAR_H - 1, UI_BLACK);
+    ui_hline(0, TOP_BAR_H - 1, SCREEN_W, UI_BLACK);
+
+    char buf[48];
+    ui_fmt_money(buf, sizeof(buf), TotalFunds);
+    int x = 6;
+    x += ui_text(UI_FONT_BOLD, x, 3, buf, FONT_ALIGN_LEFT, UI_WHITE);
+
+    int month = (int)((CityTime % 48) / 4);
+    snprintf(buf, sizeof(buf), "%s %d", s_month_names[month], CurrentYear());
+    ui_text(UI_FONT_LIGHT, x + 12, 3, buf, FONT_ALIGN_LEFT, UI_WHITE);
+
+    /* Right side: population, demand, speed */
+    int speed_icon = SimSpeed == 0 ? ICON_PAUSE : (SimSpeed == 1 ? ICON_SPEED1 : (SimSpeed == 2 ? ICON_SPEED2 : ICON_SPEED3));
+    ui_icon(speed_icon, SCREEN_W - 20, 1, true);
+
+    draw_rci(SCREEN_W - 72, 0);
+
+    long pop = CityPop > 0 ? CityPop : (long)(ResPop + (ComPop + IndPop) * 8) * 20;
+    ui_fmt_int(buf, sizeof(buf), pop);
+    int pw = ui_text_width(UI_FONT_BOLD, buf);
+    int px = SCREEN_W - 80 - pw;
+    ui_text(UI_FONT_BOLD, px, 3, buf, FONT_ALIGN_LEFT, UI_WHITE);
+    ui_icon(ICON_PEOPLE, px - 18, 1, true);
+}
+
+static void draw_tool_chip(void)
+{
+    const tool_def_t *t = &g_tools[G.tool];
+    char name[48], cost[24];
+    snprintf(name, sizeof(name), "%s", t->name);
+    int c = game_tool_cost(G.tool);
+    if (c > 0) ui_fmt_money(cost, sizeof(cost), c);
+    else snprintf(cost, sizeof(cost), "Free");
+
+    int w = 26 + ui_text_width(UI_FONT_BOLD, name) + 8 + ui_text_width(UI_FONT_LIGHT, cost) + 10;
+    int y = SCREEN_H - BOTTOM_BAR_H + 2;
+    ui_panel_dark(3, y, w, BOTTOM_BAR_H - 4);
+    ui_icon(t->icon, 7, y + 2, true);
+    int x = ui_text(UI_FONT_BOLD, 27, y + 5, name, FONT_ALIGN_LEFT, UI_WHITE) + 27 + 8;
+    bool cant_afford = c > 0 && TotalFunds < c;
+    ui_text(UI_FONT_LIGHT, x, y + 5, cost, FONT_ALIGN_LEFT, UI_WHITE);
+    if (cant_afford) ui_hline(x - 1, y + 10, ui_text_width(UI_FONT_LIGHT, cost) + 2, UI_WHITE);
+
+    /* Right side: control hint */
+    int hw = k_glyph_advance[GLYPH_B] + 3 + ui_text_width(UI_FONT_BOLD, "Menu") + 12;
+    ui_panel_dark(SCREEN_W - 3 - hw, y, hw, BOTTOM_BAR_H - 4);
+    ui_hint(SCREEN_W - hw + 2, y + 4, GLYPH_B, "Menu", UI_WHITE);
+}
+
+static void draw_ticker(void)
+{
+    if (s_ticker_t <= 0.0f || !s_ticker[0]) return;
+    int tw = ui_text_width(UI_FONT_BOLD, s_ticker);
+    int w = tw + 34;
+    if (w > SCREEN_W - 12) w = SCREEN_W - 12;
+    int x = (SCREEN_W - w) / 2;
+    /* Slide in from the top bar */
+    float in = 4.5f - s_ticker_t;
+    int y = TOP_BAR_H + 3;
+    if (in < 0.15f) y -= (int)((0.15f - in) / 0.15f * 22);
+    if (s_ticker_t < 0.15f) y -= (int)((0.15f - s_ticker_t) / 0.15f * 22);
+    ui_panel(x, y, w, 20);
+    ui_icon(s_ticker_icon, x + 4, y + 2, false);
+    render_set_clip(vec2i(x + 22, y), vec2i(w - 26, 20));
+    ui_text(UI_FONT_BOLD, x + 23, y + 4, s_ticker, FONT_ALIGN_LEFT, UI_BLACK);
+    render_set_clip(vec2i(0, 0), vec2i(0, 0));
+}
+
+static void draw_cursor(void)
+{
+    const tool_def_t *t = &g_tools[G.tool];
+    int z = G.zoom;
+    int sx = G.cur_x * z - (int)G.cam_x;
+    int sy = G.cur_y * z - (int)G.cam_y;
+    int size = t->size * z;
+    int phase = (int)(G.time * 20.0f);
+    ui_marching_rect(sx - 1, sy - 1, size + 2, size + 2, phase);
+
+    if (s_error_flash > 0.0f && ((int)(s_error_flash * 20) & 1)) {
+        ui_invert(sx + 1, sy + 1, size - 2, size - 2);
+    }
+}
+
+static void draw_floaters(void)
+{
+    int z = G.zoom;
+    for (int i = 0; i < MAX_FLOATERS; i++) {
+        floater_t *f = &s_floaters[i];
+        if (f->t <= 0.0f) continue;
+        int sx = f->tx * z + z / 2 - (int)G.cam_x;
+        int sy = f->ty * z - (int)G.cam_y - 14 - (int)((0.9f - f->t) * 24.0f);
+        int w = ui_text_width(UI_FONT_BOLD, f->text) + 6;
+        ui_fill(sx - w / 2, sy - 1, w, 13, UI_BLACK);
+        ui_text(UI_FONT_BOLD, sx, sy + 1, f->text, FONT_ALIGN_CENTER, UI_WHITE);
+    }
+}
+
+void game_draw_world(void)
+{
+    mapview_sync();
+    int cx = (int)G.cam_x, cy = (int)G.cam_y;
+    ui_fill(0, 0, SCREEN_W, SCREEN_H, UI_BLACK);
+    mapview_draw(G.zoom, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+    mapview_draw_sprites(G.zoom, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+}
+
+static void game_scene_draw(scene_t *self)
+{
+    (void)self;
+
+    /* Full-screen pages draw everything themselves */
+    if (G.mode == MODE_BUDGET) { budget_draw(); return; }
+    if (G.mode == MODE_REPORT) { report_draw(); return; }
+    if (G.mode == MODE_MAP)    { citymap_draw(); return; }
+
+    game_draw_world();
+
+    if (G.mode == MODE_PLAY) {
+        draw_cursor();
+        draw_floaters();
+    }
+
+    hud_draw_top();
+
+    switch (G.mode) {
+    case MODE_PLAY:
+        draw_tool_chip();
+        draw_ticker();
+        break;
+    case MODE_BUILD:  build_draw(); break;
+    case MODE_MENU:   menu_draw(); break;
+    case MODE_QUERY:  draw_cursor(); query_draw(); break;
+    case MODE_NOTICE: notice_draw(); break;
+    default: break;
+    }
+}
+
+static scene_vtab_t s_vtab = {
+    .init = game_scene_init,
+    .update = game_scene_update,
+    .draw = game_scene_draw,
+    .cleanup = game_scene_cleanup,
 };
+
+static scene_t s_scene = { .vtab = &s_vtab };
 
 scene_t *game_get_scene(void)
 {
-    return &micropolis_scene;
+    return &s_scene;
 }
-
-#if !defined(PLAYDATE)
-int main(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-
-    if (!platform_init("micropolis", 800, 480)) {
-        return 1;
-    }
-
-    render_init(800, 480);
-    sound_init(44100);
-    scene_manager_init();
-    scene_set(scene_title_create());
-
-    texture_t *backing_buffer = texture_create_target(vec2i(400, 240));
-    double last_time = platform_now();
-
-    while (platform_poll_events()) {
-        double now = platform_now();
-        float dt = (float)(now - last_time);
-        if (dt > 0.1f) dt = 0.1f;
-        last_time = now;
-
-        render_set_target(backing_buffer);
-        scene_update(dt);
-        scene_draw();
-
-        render_set_target(NULL);
-        render_clear(rgba(0, 0, 0, 255));
-
-        vec2i_t screen = platform_screen_size();
-        render_draw_texture_scaled(backing_buffer, vec2i(0, 0), screen, rgba_white());
-
-        platform_show_fps();
-        platform_present();
-    }
-
-    sound_cleanup();
-    platform_cleanup();
-    return 0;
-}
-#endif

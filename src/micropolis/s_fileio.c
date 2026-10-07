@@ -282,8 +282,9 @@ int saveFile(char *filename)
     strncpy((char *)(MiscHis + MISC_NAME_OFFSET), "Metropolis", 31);
   }
 
-  unsigned char buf[CTY_FILE_SIZE];
-  memset(buf, 0, sizeof(buf));
+  /* 27KB: far too big for the Playdate's game stack, so build it on the heap */
+  unsigned char *buf = (unsigned char *)calloc(1, CTY_FILE_SIZE);
+  if (!buf) return 0;
   unsigned char *p = buf;
 
 #define WR(arr, len) do { \
@@ -303,22 +304,23 @@ int saveFile(char *filename)
 
 #undef WR
 
+  int ok = 0;
+
   /* 1. Try platform_save_data */
   if (platform_save_data(filename, buf, CTY_FILE_SIZE)) {
-    return 1;
-  }
-
-  /* 2. Fallback to direct fopen for desktop */
-  FILE *f = fopen(filename, "wb");
-  if (f) {
-    size_t written = fwrite(buf, 1, CTY_FILE_SIZE, f);
-    fclose(f);
-    if (written == CTY_FILE_SIZE) {
-      return 1;
+    ok = 1;
+  } else {
+    /* 2. Fallback to direct fopen for desktop */
+    FILE *f = fopen(filename, "wb");
+    if (f) {
+      size_t written = fwrite(buf, 1, CTY_FILE_SIZE, f);
+      fclose(f);
+      ok = (written == CTY_FILE_SIZE);
     }
   }
 
-  return 0;
+  free(buf);
+  return ok;
 }
 
 

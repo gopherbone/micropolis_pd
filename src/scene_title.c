@@ -1,334 +1,466 @@
+/*
+ * Title scene: menu card over a slowly drifting aerial view of a city,
+ * plus New City (terrain preview), Load, Scenarios and About pages.
+ */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "scene_title.h"
 #include "game.h"
-#include "sim_input.h"
-#include "sim_render.h"
+#include "map_view.h"
+#include "platform.h"
 #include "render.h"
-#include "sound.h"
-#include "font.h"
+#include "sim_input.h"
+#include "ui.h"
 #include "sim.h"
 
 typedef enum {
-    TITLE_MENU_MAIN = 0,
-    TITLE_MENU_DIFFICULTY,
-    TITLE_MENU_LOAD_SLOTS,
-    TITLE_MENU_SCENARIOS,
-    TITLE_MENU_ABOUT
-} title_menu_state_t;
+    PAGE_MAIN = 0,
+    PAGE_NEW,
+    PAGE_LOAD,
+    PAGE_SCENARIOS,
+    PAGE_ABOUT
+} title_page_t;
 
-static title_menu_state_t s_menu_state = TITLE_MENU_MAIN;
-static int s_selected_index = 0;
-static bmfont_t *s_font = NULL;
-static float s_backdrop_scroll = 0.0f;
+typedef enum {
+    MAIN_CONTINUE = 0,
+    MAIN_NEW,
+    MAIN_LOAD,
+    MAIN_SCENARIOS,
+    MAIN_SOUND,
+    MAIN_ABOUT,
+    MAIN_COUNT
+} main_item_t;
 
-static const char *s_main_options[] = {
-    "Start New City",
-    "Load Saved City",
-    "Play Scenario Campaign",
-    "Sound FX: [ON]",
-    "About Micropolis"
+static title_page_t s_page = PAGE_MAIN;
+static int s_sel = 0;
+static float s_time = 0.0f;
+static bool s_has_autosave = false;
+static char s_autosave_label[64];
+
+static int s_seed = 1;
+static int s_difficulty = 0;
+static bool s_terrain_dirty = true;
+static bool s_overview_dirty = true;
+
+static float s_rep_timer[SIM_ACT_COUNT];
+static bool s_rep[SIM_ACT_COUNT];
+static float s_crank_acc = 0.0f;
+
+static const struct {
+    const char *name;
+    const char *year;
+    const char *brief;
+} s_scenarios[8] = {
+    { "Dullsville", "1900", "Nothing has happened here in 30 years. Grow sleepy Dullsville into a thriving city." },
+    { "San Francisco", "1906", "A huge earthquake has struck. Rebuild the damage and get the city back on its feet." },
+    { "Hamburg", "1944", "Firebombing has left the city in flames. Fight the fires and rebuild." },
+    { "Bern", "1965", "The roads are jammed solid. Fix traffic using mass transit and smarter roads." },
+    { "Tokyo", "1957", "A monster is attacking the city! Repair the damage and restore order." },
+    { "Detroit", "1972", "Crime and decay are out of control. Bring crime down and revive the city." },
+    { "Boston", "2010", "A nuclear plant has melted down. Clean up and rebuild the city." },
+    { "Rio de Janeiro", "2047", "Rising seas flood the coast. Protect the city and keep it growing." },
 };
-#define MAIN_OPTIONS_COUNT 5
 
-static char s_title_slot_labels[6][48];
-static const char *s_title_slot_ptrs[6];
-#define LOAD_SLOTS_COUNT 6
+static const char *s_difficulty_names[3] = { "Easy", "Medium", "Hard" };
+static const char *s_difficulty_funds[3] = { "$20,000", "$10,000", "$5,000" };
 
-static void refresh_title_slots(void)
+/* ------------------------------------------------------------------------ */
+
+static bool nav(sim_action_t a) { return s_rep[a]; }
+
+static void input_frame(float dt)
 {
-    for (int i = 0; i < 4; i++) {
-        city_meta_t meta;
-        if (city_get_slot_meta(i + 1, &meta) && meta.exists) {
-            snprintf(s_title_slot_labels[i], sizeof(s_title_slot_labels[i]),
-                     "Slot %d: %.14s (%d, $%ldk)", i + 1, meta.name, meta.year, (long)(meta.funds / 1000));
-        } else {
-            snprintf(s_title_slot_labels[i], sizeof(s_title_slot_labels[i]),
-                     "Slot %d: [Empty Slot]", i + 1);
+    static const sim_action_t dirs[] = { SIM_ACT_UP, SIM_ACT_DOWN, SIM_ACT_LEFT, SIM_ACT_RIGHT };
+    for (size_t i = 0; i < 4; i++) {
+        sim_action_t a = dirs[i];
+        s_rep[a] = false;
+        if (sim_action_pressed(a)) {
+            s_rep[a] = true;
+            s_rep_timer[a] = 0.30f;
+        } else if (sim_action_held(a)) {
+            s_rep_timer[a] -= dt;
+            if (s_rep_timer[a] <= 0.0f) {
+                s_rep[a] = true;
+                s_rep_timer[a] = 0.08f;
+            }
         }
-        s_title_slot_ptrs[i] = s_title_slot_labels[i];
     }
-    snprintf(s_title_slot_labels[4], sizeof(s_title_slot_labels[4]), "Load Example City (About.cty)");
-    s_title_slot_ptrs[4] = s_title_slot_labels[4];
-    snprintf(s_title_slot_labels[5], sizeof(s_title_slot_labels[5]), "Back");
-    s_title_slot_ptrs[5] = s_title_slot_labels[5];
 }
 
-static const char *s_diff_options[] = {
-    "Easy ($20,000)",
-    "Medium ($10,000)",
-    "Hard ($5,000)",
-    "Back"
-};
-#define DIFF_OPTIONS_COUNT 4
+static int crank_steps(void)
+{
+    s_crank_acc += sim_input_get_crank_change();
+    int n = 0;
+    while (s_crank_acc >= 30.0f) { n++; s_crank_acc -= 30.0f; }
+    while (s_crank_acc <= -30.0f) { n--; s_crank_acc += 30.0f; }
+    return n;
+}
 
-static const char *s_scenario_options[] = {
-    "1. Dullsville (1900 - Stagnation)",
-    "2. San Francisco (1906 - Earthquake)",
-    "3. Hamburg (1944 - Firestorm)",
-    "4. Bern (1965 - Traffic Crisis)",
-    "5. Tokyo (1957 - Monster Attack)",
-    "6. Detroit (1972 - Crime Wave)",
-    "7. Boston (2010 - Nuclear Meltdown)",
-    "8. Rio de Janeiro (2047 - Floods)",
-    "Back"
-};
-#define SCENARIO_OPTIONS_COUNT 9
+static int move_sel(int sel, int count)
+{
+    int old = sel;
+    if (nav(SIM_ACT_UP)) sel = (sel + count - 1) % count;
+    if (nav(SIM_ACT_DOWN)) sel = (sel + 1) % count;
+    int c = crank_steps();
+    if (c) sel = ((sel + c) % count + count) % count;
+    if (sel != old) ui_sound(UI_SND_MOVE);
+    return sel;
+}
+
+static void refresh_autosave(void)
+{
+    char name[32];
+    int year = 0;
+    long pop = 0;
+    s_has_autosave = game_autosave_meta(name, sizeof(name), &year, &pop);
+    if (s_has_autosave) {
+        char p[24];
+        ui_fmt_int(p, sizeof(p), pop);
+        snprintf(s_autosave_label, sizeof(s_autosave_label), "%s, %d", name, year);
+    }
+}
+
+static void go(title_page_t page, int sel)
+{
+    s_page = page;
+    s_sel = sel;
+}
+
+/* ------------------------------------------------------------------------ */
 
 static void scene_title_init(scene_t *self)
 {
     (void)self;
-    s_menu_state = TITLE_MENU_MAIN;
-    s_selected_index = 0;
-    s_backdrop_scroll = 0.0f;
-    sim_render_init();
-    s_font = sim_render_get_font();
+    game_ensure_init();
+    ui_init();
     sim_input_init();
+    platform_menu_clear();
+    s_time = 0.0f;
+    refresh_autosave();
+    go(PAGE_MAIN, s_has_autosave ? MAIN_CONTINUE : MAIN_NEW);
+
+    /* Backdrop: whatever city is loaded, else the example city */
+    if (!game_has_city()) game_load_backdrop();
 }
 
+static void start_game(void)
+{
+    scene_set(game_get_scene());
+}
+
+static void update_main(void)
+{
+    int old = s_sel;
+    s_sel = move_sel(s_sel, MAIN_COUNT);
+    /* Skip Continue when there's nothing to continue */
+    if (!s_has_autosave && s_sel == MAIN_CONTINUE) s_sel = (old == MAIN_NEW) ? MAIN_ABOUT : MAIN_NEW;
+
+    if (!sim_action_pressed(SIM_ACT_PRIMARY)) return;
+    ui_sound(UI_SND_SELECT);
+    switch (s_sel) {
+    case MAIN_CONTINUE:
+        if (game_continue()) start_game();
+        else ui_sound(UI_SND_ERROR);
+        break;
+    case MAIN_NEW:
+        s_seed = (int)(platform_now() * 1000.0) & 0x7fff;
+        s_terrain_dirty = true;
+        go(PAGE_NEW, 2);
+        break;
+    case MAIN_LOAD: go(PAGE_LOAD, 0); break;
+    case MAIN_SCENARIOS: go(PAGE_SCENARIOS, 0); break;
+    case MAIN_SOUND: UserSoundOn = !UserSoundOn; break;
+    case MAIN_ABOUT: go(PAGE_ABOUT, 0); break;
+    }
+}
+
+static void update_new(void)
+{
+    if (s_terrain_dirty) {
+        game_generate_terrain(s_seed);
+        s_terrain_dirty = false;
+        s_overview_dirty = true;
+    }
+    s_sel = move_sel(s_sel, 3);
+    if (s_sel == 1) {
+        int d = s_difficulty;
+        if (nav(SIM_ACT_LEFT)) d = (d + 2) % 3;
+        if (nav(SIM_ACT_RIGHT)) d = (d + 1) % 3;
+        if (d != s_difficulty) {
+            s_difficulty = d;
+            ui_sound(UI_SND_MOVE);
+        }
+    }
+    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
+        ui_sound(UI_SND_SELECT);
+        if (s_sel == 0) {
+            s_seed = (s_seed * 1103515245 + 12345) & 0x7fff;
+            s_terrain_dirty = true;
+        } else if (s_sel == 1) {
+            s_difficulty = (s_difficulty + 1) % 3;
+        } else {
+            game_start_new_city(s_difficulty);
+            start_game();
+        }
+    } else if (sim_action_pressed(SIM_ACT_SECONDARY)) {
+        ui_sound(UI_SND_BACK);
+        go(PAGE_MAIN, MAIN_NEW);
+    }
+}
+
+static void update_load(void)
+{
+    s_sel = move_sel(s_sel, 5);
+    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
+        if (s_sel < 4) {
+            city_meta_t meta;
+            if (city_get_slot_meta(s_sel + 1, &meta) && meta.exists && game_load_slot(s_sel + 1)) {
+                ui_sound(UI_SND_SELECT);
+                start_game();
+            } else {
+                ui_sound(UI_SND_ERROR);
+            }
+        } else {
+            ui_sound(UI_SND_SELECT);
+            game_start_embedded_city("about.cty");
+            start_game();
+        }
+    } else if (sim_action_pressed(SIM_ACT_SECONDARY)) {
+        ui_sound(UI_SND_BACK);
+        go(PAGE_MAIN, MAIN_LOAD);
+    }
+}
+
+static void update_scenarios(void)
+{
+    s_sel = move_sel(s_sel, 8);
+    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
+        ui_sound(UI_SND_SELECT);
+        game_start_scenario(s_sel + 1);
+        start_game();
+    } else if (sim_action_pressed(SIM_ACT_SECONDARY)) {
+        ui_sound(UI_SND_BACK);
+        go(PAGE_MAIN, MAIN_SCENARIOS);
+    }
+}
 
 static void scene_title_update(scene_t *self, float dt)
 {
     (void)self;
     sim_input_poll(dt);
-    s_backdrop_scroll += dt * 10.0f;
+    input_frame(dt);
+    s_time += dt;
 
-    int count = 0;
-    switch (s_menu_state) {
-    case TITLE_MENU_MAIN:       count = MAIN_OPTIONS_COUNT; break;
-    case TITLE_MENU_DIFFICULTY: count = DIFF_OPTIONS_COUNT; break;
-    case TITLE_MENU_LOAD_SLOTS: count = LOAD_SLOTS_COUNT; break;
-    case TITLE_MENU_SCENARIOS:  count = SCENARIO_OPTIONS_COUNT; break;
-    case TITLE_MENU_ABOUT:      count = 1; break;
+    /* Keep the backdrop city's traffic and smoke moving */
+    static float blink = 0.0f;
+    blink += dt;
+    if (blink > 0.25f) {
+        blink = 0.0f;
+        flagBlink = !flagBlink;
+        animateTiles();
     }
 
-    /* D-Pad / Arrow Navigation */
-    if (sim_action_pressed(SIM_ACT_UP)) {
-        s_selected_index = (s_selected_index + count - 1) % count;
-        sound_play_sound("assets/sounds/button.wav", 0.7f);
-    }
-    if (sim_action_pressed(SIM_ACT_DOWN)) {
-        s_selected_index = (s_selected_index + 1) % count;
-        sound_play_sound("assets/sounds/button.wav", 0.7f);
-    }
-
-    /* Mouse Hover / Click */
-    const sim_mouse_t *m = sim_input_get_mouse();
-    int menu_w = (s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 300 : 260;
-    int menu_x = (400 - menu_w) / 2;
-    int menu_y = (s_menu_state == TITLE_MENU_SCENARIOS) ? 55 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 65 : 95);
-    int item_h = 16;
-
-    for (int i = 0; i < count; i++) {
-        int ry = menu_y + 20 + i * item_h;
-        if (m->pos.x >= menu_x + 8 && m->pos.x <= menu_x + menu_w - 8 &&
-            m->pos.y >= ry - 2 && m->pos.y < ry + item_h - 2) {
-            if (s_selected_index != i) {
-                s_selected_index = i;
-            }
-            if (m->left_pressed) {
-                sim_input_trigger_action(SIM_ACT_PRIMARY);
-            }
+    switch (s_page) {
+    case PAGE_MAIN: update_main(); break;
+    case PAGE_NEW: update_new(); break;
+    case PAGE_LOAD: update_load(); break;
+    case PAGE_SCENARIOS: update_scenarios(); break;
+    case PAGE_ABOUT:
+        if (sim_action_pressed(SIM_ACT_PRIMARY) || sim_action_pressed(SIM_ACT_SECONDARY)) {
+            ui_sound(UI_SND_BACK);
+            go(PAGE_MAIN, MAIN_ABOUT);
         }
+        break;
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+
+static void draw_backdrop(void)
+{
+    mapview_sync();
+    /* Slow Lissajous drift over the 8px city */
+    float max_x = CITY_W * 8 - SCREEN_W, max_y = CITY_H * 8 - SCREEN_H;
+    int cx = (int)(max_x * (0.5f + 0.42f * sinf(s_time * 0.035f)));
+    int cy = (int)(max_y * (0.5f + 0.40f * sinf(s_time * 0.05f + 1.0f)));
+    mapview_draw(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+    mapview_draw_sprites(8, cx, cy, 0, 0, SCREEN_W, SCREEN_H);
+}
+
+static void draw_list_row(int x, int y, int w, const char *label, const char *value, bool sel, bool dim)
+{
+    ui_ink_t ink = sel ? UI_WHITE : UI_BLACK;
+    if (sel) {
+        ui_fill(x, y, w, 18, UI_BLACK);
+        ui_icon(ICON_ARROW_R, x + 1, y + 1, true);
+    }
+    ui_text(UI_FONT_BOLD, x + 16, y + 3, label, FONT_ALIGN_LEFT, ink);
+    if (value) ui_text(UI_FONT_LIGHT, x + w - 6, y + 3, value, FONT_ALIGN_RIGHT, ink);
+    if (dim) for (int k = x + 14; k < x + w - 6; k += 2) ui_fill(k, y + 9, 1, 1, ink);
+}
+
+static void draw_logo(int x, int y)
+{
+    ui_text(UI_FONT_BIG, x, y, "MICROPOLIS", FONT_ALIGN_LEFT, UI_BLACK);
+    ui_text(UI_FONT_LIGHT, x + 1, y + 27, "The classic city simulator", FONT_ALIGN_LEFT, UI_BLACK);
+}
+
+static void draw_main(void)
+{
+    draw_backdrop();
+    const int px = 10, py = 10, pw = 182, ph = SCREEN_H - 20;
+    ui_panel(px, py, pw, ph);
+    draw_logo(px + 12, py + 10);
+    ui_hline(px + 8, py + 50, pw - 16, UI_BLACK);
+
+    static const char *labels[MAIN_COUNT] = {
+        "Continue", "New City", "Load City", "Scenarios", "Sound", "About"
+    };
+    /* Six rows (with Continue) must clear the context divider at ph - 48 */
+    int y = py + 54;
+    int step = s_has_autosave ? 19 : 20;
+    int row = 0;
+    for (int i = 0; i < MAIN_COUNT; i++) {
+        if (i == MAIN_CONTINUE && !s_has_autosave) continue;
+        const char *val = NULL;
+        if (i == MAIN_SOUND) val = UserSoundOn ? "On" : "Off";
+        draw_list_row(px + 6, y + row * step, pw - 12, labels[i], val, i == s_sel, false);
+        row++;
     }
 
-    /* Back / Secondary */
-    if (sim_action_pressed(SIM_ACT_SECONDARY)) {
-        if (s_menu_state != TITLE_MENU_MAIN) {
-            s_menu_state = TITLE_MENU_MAIN;
-            s_selected_index = 0;
-            sound_play_sound("assets/sounds/button.wav", 0.7f);
-            return;
+    /* Context line for the selected item */
+    const char *ctx = "";
+    switch (s_sel) {
+    case MAIN_CONTINUE: ctx = s_has_autosave ? s_autosave_label : "No city in progress"; break;
+    case MAIN_NEW: ctx = "Pick terrain and difficulty"; break;
+    case MAIN_LOAD: ctx = "Open a saved city"; break;
+    case MAIN_SCENARIOS: ctx = "8 historic challenges"; break;
+    case MAIN_SOUND: ctx = "Sound effects"; break;
+    case MAIN_ABOUT: ctx = "Credits"; break;
+    }
+    ui_hline(px + 8, py + ph - 48, pw - 16, UI_BLACK);
+    ui_text(UI_FONT_LIGHT, px + 12, py + ph - 42, ctx, FONT_ALIGN_LEFT, UI_BLACK);
+    ui_hints(px + pw - 8, py + ph - 21, "Select", NULL, UI_BLACK);
+}
+
+static void draw_new(void)
+{
+    ui_fill(0, 0, SCREEN_W, SCREEN_H, UI_WHITE);
+    ui_fill(0, 0, SCREEN_W, 30, UI_BLACK);
+    ui_text(UI_FONT_BIG, 10, 2, "New City", FONT_ALIGN_LEFT, UI_WHITE);
+
+    const int mx = 8, my = 35; /* 3px above and below the map frame */
+    ui_rect(mx - 2, my - 2, CITY_W * 2 + 4, CITY_H * 2 + 4, UI_BLACK);
+    mapview_draw_overview(mx, my, LAYER_CITY, s_overview_dirty);
+    s_overview_dirty = false;
+
+    const int rx = mx + CITY_W * 2 + 12, rw = SCREEN_W - rx - 6;
+    ui_text(UI_FONT_LIGHT, rx, my, "City name", FONT_ALIGN_LEFT, UI_BLACK);
+    ui_text(UI_FONT_BOLD, rx, my + 13, game_random_city_name(s_seed), FONT_ALIGN_LEFT, UI_BLACK);
+
+    char diff[32];
+    snprintf(diff, sizeof(diff), "%s", s_difficulty_names[s_difficulty]);
+    int y = my + 38;
+    draw_list_row(rx - 4, y, rw + 4, "New terrain", NULL, s_sel == 0, false);
+    draw_list_row(rx - 4, y + 22, rw + 4, diff, NULL, s_sel == 1, false);
+    if (s_sel == 1) ui_icon(ICON_ARROW_L, rx + rw - 30, y + 23, true), ui_icon(ICON_ARROW_R, rx + rw - 14, y + 23, true);
+    draw_list_row(rx - 4, y + 44, rw + 4, "Start", NULL, s_sel == 2, false);
+
+    char funds[48];
+    snprintf(funds, sizeof(funds), "Start with %s", s_difficulty_funds[s_difficulty]);
+    ui_text(UI_FONT_LIGHT, rx, y + 76, funds, FONT_ALIGN_LEFT, UI_BLACK);
+    ui_text_wrap(UI_FONT_LIGHT, rx, y + 94, rw, "Dark areas are water, textured areas are forest.", UI_BLACK, 3);
+
+    ui_hints(SCREEN_W - 8, SCREEN_H - 18, "Select", "Back", UI_BLACK);
+}
+
+static void draw_load(void)
+{
+    draw_backdrop();
+    ui_dim(0, 0, SCREEN_W, SCREEN_H);
+    const int w = 300, h = 160, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
+    ui_panel(x, y, w, h);
+    ui_text(UI_FONT_BOLD, x + 12, y + 8, "Load City", FONT_ALIGN_LEFT, UI_BLACK);
+    ui_hline(x + 6, y + 24, w - 12, UI_BLACK);
+    for (int i = 0; i < 5; i++) {
+        char label[64], val[32] = "";
+        bool exists = true;
+        if (i < 4) {
+            city_meta_t meta;
+            exists = city_get_slot_meta(i + 1, &meta) && meta.exists;
+            if (exists) {
+                snprintf(label, sizeof(label), "%.18s", meta.name);
+                char pop[24];
+                ui_fmt_int(pop, sizeof(pop), meta.population);
+                snprintf(val, sizeof(val), "%d  -  %s", meta.year, pop);
+            } else {
+                snprintf(label, sizeof(label), "Slot %d: empty", i + 1);
+            }
+        } else {
+            snprintf(label, sizeof(label), "Example city");
+            snprintf(val, sizeof(val), "Micropolis");
         }
+        draw_list_row(x + 6, y + 30 + i * 20, w - 12, label, val[0] ? val : NULL, i == s_sel, !exists);
     }
+    ui_hints(x + w - 8, y + h - 20, "Load", "Back", UI_BLACK);
+}
 
-    /* Selection / Confirm */
-    if (sim_action_pressed(SIM_ACT_PRIMARY)) {
-        sound_play_sound("assets/sounds/build.wav", 1.0f);
-
-        if (s_menu_state == TITLE_MENU_MAIN) {
-            switch (s_selected_index) {
-            case 0: /* Start New City */
-                s_menu_state = TITLE_MENU_DIFFICULTY;
-                s_selected_index = 0;
-                break;
-            case 1: /* Load Saved City */
-                refresh_title_slots();
-                s_menu_state = TITLE_MENU_LOAD_SLOTS;
-                s_selected_index = 0;
-                break;
-            case 2: /* Scenario Campaign */
-                s_menu_state = TITLE_MENU_SCENARIOS;
-                s_selected_index = 0;
-                break;
-            case 3: /* Sound FX Toggle */
-                UserSoundOn = !UserSoundOn;
-                s_main_options[3] = UserSoundOn ? "Sound FX: [ON]" : "Sound FX: [OFF]";
-                break;
-            case 4: /* About */
-                s_menu_state = TITLE_MENU_ABOUT;
-                s_selected_index = 0;
-                break;
-            }
-        } else if (s_menu_state == TITLE_MENU_DIFFICULTY) {
-            if (s_selected_index < 3) {
-                game_start_new_city(s_selected_index);
-                scene_set(game_get_scene());
-            } else {
-                s_menu_state = TITLE_MENU_MAIN;
-                s_selected_index = 0;
-            }
-        } else if (s_menu_state == TITLE_MENU_LOAD_SLOTS) {
-            if (s_selected_index < 4) {
-                city_meta_t meta;
-                if (city_get_slot_meta(s_selected_index + 1, &meta) && meta.exists) {
-                    game_load_slot(s_selected_index + 1);
-                    scene_set(game_get_scene());
-                } else {
-                    sound_play_sound("assets/sounds/uh-uh.wav", 1.0f);
-                }
-            } else if (s_selected_index == 4) {
-                game_start_embedded_city("about.cty");
-                scene_set(game_get_scene());
-            } else {
-                s_menu_state = TITLE_MENU_MAIN;
-                s_selected_index = 1;
-            }
-        } else if (s_menu_state == TITLE_MENU_SCENARIOS) {
-            if (s_selected_index < 8) {
-                game_start_scenario(s_selected_index + 1);
-                scene_set(game_get_scene());
-            } else {
-                s_menu_state = TITLE_MENU_MAIN;
-                s_selected_index = 2;
-            }
-        } else if (s_menu_state == TITLE_MENU_ABOUT) {
-            s_menu_state = TITLE_MENU_MAIN;
-            s_selected_index = 4;
-        }
+static void draw_scenarios(void)
+{
+    draw_backdrop();
+    ui_dim(0, 0, SCREEN_W, SCREEN_H);
+    const int x = 8, y = 8, w = SCREEN_W - 16, h = SCREEN_H - 16;
+    ui_panel(x, y, w, h);
+    ui_text(UI_FONT_BOLD, x + 12, y + 8, "Scenarios", FONT_ALIGN_LEFT, UI_BLACK);
+    ui_hline(x + 6, y + 24, w - 12, UI_BLACK);
+    const int lw = 170;
+    for (int i = 0; i < 8; i++) {
+        draw_list_row(x + 6, y + 30 + i * 20, lw, s_scenarios[i].name, s_scenarios[i].year, i == s_sel, false);
     }
+    ui_vline(x + lw + 12, y + 30, 160, UI_BLACK);
+    int dx = x + lw + 20, dw = w - lw - 30;
+    ui_text(UI_FONT_BIG, dx, y + 28, s_scenarios[s_sel].year, FONT_ALIGN_LEFT, UI_BLACK);
+    ui_text(UI_FONT_BOLD, dx, y + 56, s_scenarios[s_sel].name, FONT_ALIGN_LEFT, UI_BLACK);
+    ui_text_wrap(UI_FONT_LIGHT, dx, y + 76, dw, s_scenarios[s_sel].brief, UI_BLACK, 6);
+    ui_hints(x + w - 8, y + h - 20, "Play", "Back", UI_BLACK);
+}
+
+static void draw_about(void)
+{
+    draw_backdrop();
+    ui_dim(0, 0, SCREEN_W, SCREEN_H);
+    const int w = 320, h = 180, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
+    ui_panel(x, y, w, h);
+    draw_logo(x + 14, y + 10);
+    ui_hline(x + 8, y + 50, w - 16, UI_BLACK);
+    int ty = y + 58;
+    ui_text_wrap(UI_FONT_LIGHT, x + 14, ty, w - 28,
+                 "Micropolis is the open-source release of SimCity Classic, "
+                 "designed by Will Wright at Maxis and released under the GPL "
+                 "by Electronic Arts and Don Hopkins.", UI_BLACK, 5);
+    ui_text_wrap(UI_FONT_LIGHT, x + 14, ty + 62, w - 28,
+                 "Tiny Engine port by icedman. Fonts: Nontendo by Shaun Inman.", UI_BLACK, 3);
+    ui_hints(x + w - 8, y + h - 20, NULL, "Back", UI_BLACK);
 }
 
 static void scene_title_draw(scene_t *self)
 {
     (void)self;
-
-    /* 1. Backdrop */
-    render_clear(rgba(12, 16, 28, 255));
-
-    /* Animated night sky horizon & water gradient */
-    for (int y = 0; y < 240; y += 4) {
-        uint8_t b = (uint8_t)(25 + y * 0.25f);
-        render_fill_rect(vec2i(0, y), vec2i(400, 4), rgba(10, 15, b, 255));
-    }
-
-    /* Distant building silhouettes */
-    render_fill_rect(vec2i(20, 160), vec2i(35, 80), rgba(18, 22, 38, 255));
-    render_fill_rect(vec2i(65, 140), vec2i(45, 100), rgba(14, 18, 32, 255));
-    render_fill_rect(vec2i(120, 170), vec2i(30, 70), rgba(20, 25, 42, 255));
-    render_fill_rect(vec2i(270, 150), vec2i(40, 90), rgba(15, 20, 35, 255));
-    render_fill_rect(vec2i(320, 130), vec2i(50, 110), rgba(18, 22, 38, 255));
-
-    /* Stars in sky */
-    static const vec2i_t stars[] = {
-        {35, 25}, {90, 18}, {150, 32}, {220, 15}, {290, 28}, {360, 22},
-        {50, 60}, {180, 55}, {260, 70}, {340, 65}
-    };
-    for (size_t i = 0; i < sizeof(stars) / sizeof(stars[0]); i++) {
-        render_draw_point(stars[i], rgba(200, 220, 255, 200));
-    }
-
-    /* 2. Title Banner */
-    if (s_menu_state != TITLE_MENU_SCENARIOS) {
-        /* Large high-contrast logo banner */
-        render_fill_rect(vec2i(50, 16), vec2i(300, 48), rgba_black());
-        render_draw_rect(vec2i(50, 16), vec2i(300, 48), rgba_white());
-        render_draw_rect(vec2i(52, 18), vec2i(296, 44), rgba_white());
-
-        if (s_font) {
-            font_draw_bmfont(s_font, vec2i(200, 24), "MICROPOLIS", FONT_ALIGN_CENTER, rgba(255, 230, 80, 255));
-            font_draw_bmfont(s_font, vec2i(200, 44), "SimCity Classic - Tiny Engine Port", FONT_ALIGN_CENTER, rgba(180, 200, 230, 255));
-        }
-    }
-
-    /* 3. Menu Box */
-    int menu_w = (s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 310 : 270;
-    int menu_h = (s_menu_state == TITLE_MENU_SCENARIOS) ? 175 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 140 : 125);
-    int menu_x = (400 - menu_w) / 2;
-    int menu_y = (s_menu_state == TITLE_MENU_SCENARIOS) ? 35 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 50 : 82);
-
-    render_fill_rect(vec2i(menu_x, menu_y), vec2i(menu_w, menu_h), rgba_black());
-    render_draw_rect(vec2i(menu_x, menu_y), vec2i(menu_w, menu_h), rgba_white());
-    render_draw_rect(vec2i(menu_x + 2, menu_y + 2), vec2i(menu_w - 4, menu_h - 4), rgba_white());
-    render_draw_line(vec2i(menu_x + 2, menu_y + 20), vec2i(menu_x + menu_w - 3, menu_y + 20), rgba_white());
-
-    /* Header title inside box */
-    const char *header = "MAIN MENU";
-    if (s_menu_state == TITLE_MENU_DIFFICULTY) header = "SELECT DIFFICULTY";
-    else if (s_menu_state == TITLE_MENU_LOAD_SLOTS) header = "LOAD SAVED CITY";
-    else if (s_menu_state == TITLE_MENU_SCENARIOS) header = "SCENARIO CAMPAIGN";
-    else if (s_menu_state == TITLE_MENU_ABOUT) header = "ABOUT MICROPOLIS";
-
-    if (s_font) {
-        font_draw_bmfont(s_font, vec2i(menu_x + menu_w / 2, menu_y + 5), header, FONT_ALIGN_CENTER, rgba(255, 215, 60, 255));
-    }
-
-    /* Menu Items */
-    if (s_menu_state == TITLE_MENU_ABOUT) {
-        if (s_font) {
-            font_draw_bmfont(s_font, vec2i(menu_x + 12, menu_y + 28), "Micropolis / SimCity Classic", FONT_ALIGN_LEFT, rgba(255, 240, 120, 255));
-            font_draw_bmfont(s_font, vec2i(menu_x + 12, menu_y + 44), "Original Game by Will Wright (Maxis)", FONT_ALIGN_LEFT, rgba_white());
-            font_draw_bmfont(s_font, vec2i(menu_x + 12, menu_y + 60), "GPL v3 Release by Don Hopkins / EA", FONT_ALIGN_LEFT, rgba(200, 200, 210, 255));
-            font_draw_bmfont(s_font, vec2i(menu_x + 12, menu_y + 76), "Ported to Tiny Engine & Playdate", FONT_ALIGN_LEFT, rgba(160, 220, 180, 255));
-            font_draw_bmfont(s_font, vec2i(menu_x + menu_w / 2, menu_y + 100), "[ Press (A) or (B) to return ]", FONT_ALIGN_CENTER, rgba(140, 150, 170, 255));
-        }
-    } else {
-        const char **items = s_main_options;
-        int count = MAIN_OPTIONS_COUNT;
-        if (s_menu_state == TITLE_MENU_DIFFICULTY) {
-            items = s_diff_options;
-            count = DIFF_OPTIONS_COUNT;
-        } else if (s_menu_state == TITLE_MENU_LOAD_SLOTS) {
-            items = s_title_slot_ptrs;
-            count = LOAD_SLOTS_COUNT;
-        } else if (s_menu_state == TITLE_MENU_SCENARIOS) {
-            items = s_scenario_options;
-            count = SCENARIO_OPTIONS_COUNT;
-        }
-
-        int item_h = (s_menu_state == TITLE_MENU_SCENARIOS) ? 15 : ((s_menu_state == TITLE_MENU_LOAD_SLOTS) ? 16 : 18);
-        int start_y = menu_y + 22;
-
-        for (int i = 0; i < count; i++) {
-            int ry = start_y + i * item_h;
-            bool sel = (s_selected_index == i);
-
-            if (sel) {
-                render_draw_rect(vec2i(menu_x + 6, ry - 1), vec2i(menu_w - 12, item_h), rgba_white());
-            }
-
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%s%s", sel ? "> " : "  ", items[i]);
-            if (s_font) {
-                font_draw_bmfont(s_font, vec2i(menu_x + 10, ry), buf, FONT_ALIGN_LEFT,
-                                 sel ? rgba(255, 235, 80, 255) : rgba(220, 225, 235, 255));
-            }
-        }
-    }
-
-    /* 4. Footer Hint */
-    if (s_font) {
-        font_draw_bmfont(s_font, vec2i(200, 222), "D-Pad / Mouse: Move | (A): Select | (B): Back",
-                         FONT_ALIGN_CENTER, rgba(140, 150, 170, 255));
+    switch (s_page) {
+    case PAGE_MAIN: draw_main(); break;
+    case PAGE_NEW: draw_new(); break;
+    case PAGE_LOAD: draw_load(); break;
+    case PAGE_SCENARIOS: draw_scenarios(); break;
+    case PAGE_ABOUT: draw_about(); break;
     }
 }
 
 static void scene_title_cleanup(scene_t *self)
 {
     (void)self;
-    s_font = NULL;
 }
 
 static const scene_vtab_t s_scene_title_vtab = {
@@ -348,4 +480,3 @@ scene_t *scene_title_create(void)
 {
     return &s_scene_title;
 }
-

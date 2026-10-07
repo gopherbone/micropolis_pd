@@ -1,0 +1,101 @@
+frames 20
+shot 01_title
+tap a
+frames 5
+shot 02_new
+tap up
+tap right
+shot 03_new_diff
+tap down
+tap a
+frames 60
+shot 04_game
+tap b
+frames 3
+shot 05_build
+# Residential: down from Road (r0c1) -> Commercial (r1c1), left -> Residential
+tap down
+tap left
+frames 2
+shot 06_build_res
+tap a
+tap a
+frames 6
+# Road: open sheet, up -> Road, then drag a road right with A held
+tap b
+tap up
+tap right
+tap a
+tap down 2
+hold a
+tap right 6
+release a
+frames 6
+shot 07_road_drag
+crank 70 10
+frames 6
+shot 08_far
+crank -70 10
+frames 4
+# Budget: from Road (r0c1) up -> city row (r4c1), left -> Budget
+tap b
+tap up
+tap left
+frames 2
+shot 09_build_city
+tap a
+frames 2
+tap right 7
+shot 10_budget
+tap a
+# Report
+tap b
+tap up
+tap a
+frames 2
+shot 11_report
+tap right
+shot 11b_demand
+tap right
+shot 12_opinion
+tap right
+shot 13_history
+tap b
+# Map
+tap b
+tap up
+tap right
+tap a
+frames 2
+shot 14_map
+tap down 2
+shot 15_map_traffic
+tap a
+tap left 4
+shot 16_map_jump
+tap b
+tap b
+# Inspect: r2c3
+tap b
+tap down 2
+tap right 2
+tap a
+tap up 3
+tap a
+frames 3
+shot 17_query
+tap b
+# Game menu -> Disasters -> Fire (from Inspect r2c3: down 2 -> Game r4c3)
+tap b
+tap down 2
+tap a
+frames 2
+shot 18_menu
+tap down 3
+tap a
+frames 2
+shot 19_disasters
+tap down
+tap a
+frames 150
+shot 20_notice

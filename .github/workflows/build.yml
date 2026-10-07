@@ -1,0 +1,74 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to publish releases for v* tags
+
+env:
+  PLAYDATE_SDK_VERSION: "3.1.2"
+
+jobs:
+  device:
+    name: Playdate build
+    runs-on: ubuntu-24.04
+    env:
+      PLAYDATE_SDK_PATH: ${{ github.workspace }}/.playdate-sdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM toolchain and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi cmake python3-pil zip
+
+      - name: Cache Playdate SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: .playdate-sdk
+          key: playdate-sdk-linux-${{ env.PLAYDATE_SDK_VERSION }}
+
+      - name: Download Playdate SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$PLAYDATE_SDK_PATH"
+          curl -fsSL "https://download.panic.com/playdate_sdk/Linux/PlaydateSDK-${PLAYDATE_SDK_VERSION}.tar.gz" \
+            | tar -xz -C "$PLAYDATE_SDK_PATH" --strip-components=1
+
+      - name: Generate assets
+        run: python3 tools/prep_assets.py
+
+      - name: Build
+        run: |
+          BUILD_DEVICE=1 cmake -S . -B build-device -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PLAYDATE_SDK_PATH/C_API/buildsupport/arm.cmake"
+          cmake --build build-device -j"$(nproc)"
+
+      - name: Package
+        run: |
+          rm -rf Micropolis.pdx
+          mv micropolis_DEVICE.pdx Micropolis.pdx
+          zip -qr Micropolis.pdx.zip Micropolis.pdx
+          ls -la Micropolis.pdx Micropolis.pdx.zip
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Micropolis.pdx
+          path: Micropolis.pdx.zip
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" Micropolis.pdx.zip \
+            --title "Micropolis $GITHUB_REF_NAME" --generate-notes

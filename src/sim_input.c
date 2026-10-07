@@ -17,6 +17,9 @@ static bool s_prev_mouse_left = false;
 static bool s_prev_mouse_right = false;
 static float s_crank_change = 0.0f;
 static float s_crank_accum = 0.0f;
+/* After a scene switch, buttons still held from the previous scene must not
+ * count as new presses (e.g. the A that confirmed "Quit to title"). */
+static bool s_wait_release = false;
 
 void sim_input_init(void)
 {
@@ -30,6 +33,7 @@ void sim_input_init(void)
     s_prev_mouse_right = false;
     s_crank_change = 0.0f;
     s_crank_accum = 0.0f;
+    s_wait_release = true;
 }
 
 void sim_input_poll(float dt)
@@ -157,6 +161,17 @@ void sim_input_poll(float dt)
     s_mouse.right_pressed = (s_mouse.right_down && !s_prev_mouse_right);
     s_mouse.right_released = (!s_mouse.right_down && s_prev_mouse_right);
     s_prev_mouse_right = s_mouse.right_down;
+
+    /* Swallow buttons carried over from the previous scene until released */
+    if (s_wait_release) {
+        bool any = false;
+        for (int i = 0; i < SIM_ACT_COUNT; i++) any = any || s_action_held[i];
+        if (any) {
+            memset(s_action_held, 0, sizeof(s_action_held));
+        } else {
+            s_wait_release = false;
+        }
+    }
 
     /* 5. Compute Pressed & Released Edges for Actions */
     for (int i = 0; i < SIM_ACT_COUNT; i++) {

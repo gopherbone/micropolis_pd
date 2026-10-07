@@ -1,198 +1,120 @@
-# Micropolis (SimCity Classic) — Tiny Engine Port
+# Micropolis for Playdate
 
-An authentic, modern port of **Micropolis** (the open-source release of Will Wright's classic **SimCity**, originally created by Maxis and released under GPL v3 by Electronic Arts / Don Hopkins) to the **Tiny Engine**.
+The classic city simulator, rebuilt for the [Playdate](https://play.date): the full Micropolis (SimCity Classic) simulation with an interface designed around the D-pad, two buttons and the crank.
 
-This port brings the classic 1989 city builder to both **Desktop (Linux, macOS, Windows via SDL2)** and the **Panic Playdate (400x240 1-bit monochrome handheld console)**.
+![Detroit at near zoom: a dense grid of homes, shops and civic buildings under a status bar showing funds, date, population, R/C/I demand and speed](docs/screenshots/city.png)
 
----
+## What it is
 
-## Table of Contents
+[Micropolis](https://github.com/SimHacker/micropolis) is the open-source release of the original SimCity. This project takes [icedman's Tiny Engine port](https://github.com/icedman/tiny_micropolis) of that simulation and gives it a Playdate-native interface:
 
-- [About the Game](#about-the-game)
-- [About the Port](#about-the-port)
-- [Features](#features)
-- [Controls](#controls)
-  - [Desktop (SDL2 / Keyboard & Mouse)](#desktop-sdl2--keyboard--mouse)
-  - [Playdate Handheld Console](#playdate-handheld-console)
-- [Building & Running](#building--running)
-- [Attribution & Credits](#attribution--credits)
-- [License](#license)
+- **The whole simulation.** Zoning, power grids, traffic, pollution, crime, land value, budgets, disasters, public opinion, and all eight historical scenarios.
+- **The map takes up nearly the whole screen.** A slim status bar shows funds, date, population, R/C/I demand and speed. A chip at the bottom shows the current tool and its cost.
+- **Crank to zoom.** Switch between 16px tiles and an 8px overview that shows four times as much city.
+- **Everything else is one button away.** B opens a build sheet with all 16 tools, plus the Budget, City Report, City Map and Game pages.
+- **It looks like it belongs on the console.** Hints use the Playdate's own button glyphs, text is set in Nontendo, and everything is drawn for the 1-bit screen.
+- **It picks up where you left off.** The game autosaves when you quit, lock the device or switch games, and *Continue* resumes your city.
 
----
+## Screenshots
 
-## About the Game
-
-Originally released in 1989 by Maxis, *SimCity* defined the city-building simulation genre. Players act as mayor and urban planner, founding a city on procedurally generated terrain, zoning land, providing electricity and transit networks, managing municipal budgets, and responding to disasters.
-
-Key simulation mechanics preserved in full:
-- **Cellular Automata Simulation**: Dynamic grid simulation modeling growth, decay, power grids, traffic flows, pollution propagation, crime, and land value.
-- **Zoning**: Residential (green), Commercial (blue), and Industrial (yellow) development responding to R/C/I market demand valves.
-- **Infrastructure & Utilities**: Coal and Nuclear power plants, electrical power lines, transit roads, sea ports, airports, and sports stadiums.
-- **Municipal Budgeting**: Setting property tax rates and allocating funding percentages for Road Maintenance, Police Departments, and Fire Protection.
-- **Public Opinion & Evaluation**: Annual citizen evaluations, mayor approval ratings, city classification (*Village* to *Megalopolis*), and top problem surveys.
-- **Disasters**: Real-time emergencies including Fires, Floods, Earthquakes, Tornados, Monster attacks, and Nuclear Power Plant meltdowns.
-- **Historical Scenarios**: 8 classic campaign scenarios:
-  1. *Dullsville (1900)* — Cure economic stagnation.
-  2. *San Francisco (1906)* — Recover from the historic earthquake.
-  3. *Hamburg (1944)* — Rebuild after devastating wartime firestorms.
-  4. *Bern (1965)* — Overhaul the transit grid to resolve city-wide gridlock.
-  5. *Tokyo (1957)* — Reconstruct the metropolis following a monster attack.
-  6. *Detroit (1972)* — Deploy law enforcement to curb runaway crime.
-  7. *Boston (2010)* — Contain a catastrophic nuclear power meltdown.
-  8. *Rio de Janeiro (2047)* — Fortify the coast against raging flash floods.
-
----
-
-## About the Port
-
-This port adapts the open-source Micropolis simulation core into **Tiny Engine**, a modular, lightweight C game engine engineered for high-performance 2D rendering across desktop computers and embedded handhelds.
-
-This port starts from works done in https://github.com/tenox7/vtcity.
-
-### Architecture Highlights
-- **Engine Decoupling**: Core cellular automata simulation routines run at a fixed 20 Hz tick, cleanly decoupled from the 60 FPS graphical rendering and input processing loop.
-- **C99 Standard Modernization**: The entire codebase has been refactored from legacy K&R / GNU C89 to clean, strict standard C99 (`-std=c99`), compiling warning-free on modern compilers (`gcc`, `clang`, and `arm-none-eabi-gcc`).
-- **Texture-Based Graphical Pipeline**: Replaced legacy DEC VT terminal escape sequences and X11/Tk dependencies with a modern 16x16 tile blitter and master sprite sheet (`assets/gfx/tiles_16.png` and `assets/gfx/tileset.json`).
-- **Dynamic Sprite Subsystem**: Smooth rendering of animated entities including passenger trains, police/traffic helicopters, commercial airplanes, cargo ships, monsters, tornados, and multi-stage explosions.
-- **Playdate 1-Bit Monochrome Optimization**:
-  - Solid black UI panels (`rgba_black()`) with crisp white double borders (`rgba_white()`) to eliminate dithering speckles on the Playdate LCD.
-  - Pixel-perfect building placement aligning 3x3, 4x4, and 6x6 structures directly with the on-screen cursor outline.
-  - Native integration with the Playdate OS system menu.
-- **Audio Subsystem**: 27 classic sound effects converted from raw PCM to 16-bit mono 44.1 kHz WAV assets.
-
----
+| | |
+|:---:|:---:|
+| ![Title screen: menu card over an aerial view of a city](docs/screenshots/title.png) | ![New City screen with a whole-map terrain preview](docs/screenshots/new-city.png) |
+| **Title.** The menu drifts over a live city. | **New City.** Preview the terrain and regenerate it until you like it. |
+| ![Build sheet: a grid of 16 tool icons with details for the Road tool](docs/screenshots/build-sheet.png) | ![A road being dragged out from a residential zone, with a running cost label](docs/screenshots/drag-build.png) |
+| **Build sheet.** All tools in a 4×4 grid, with live previews, costs and descriptions. | **Drag-building.** Hold A and move to lay road, rail or power lines. |
+| ![Far zoom over Detroit showing four times as much city](docs/screenshots/far-zoom.png) | ![City Map with nine data layers](docs/screenshots/city-map.png) |
+| **Far zoom.** Turn the crank to see more of the city. | **City Map.** Nine data layers, and you can jump anywhere. |
+| ![Budget page with tax and department funding sliders](docs/screenshots/budget.png) | ![City Report demand tab with bars for residential, commercial and industrial](docs/screenshots/demand.png) |
+| **Budget.** Adjust with the D-pad or the crank. | **Demand.** What residents, shops and industry want. |
+| ![Inspect card listing density, value, crime, pollution, growth and power](docs/screenshots/inspect.png) | ![Scenario list with a briefing for Dullsville, 1900](docs/screenshots/scenarios.png) |
+| **Inspect.** Check what's happening on any tile. | **Scenarios.** Eight historical challenges, from Dullsville to Rio. |
 
 ## Controls
 
-The game provides full input support for both keyboard/mouse on Desktop and the D-pad/crank/buttons on the Playdate handheld.
+| Input | On the map | In menus and pages |
+|---|---|---|
+| **D-pad** | Move the cursor (speeds up while held) | Move the selection; left and right change values |
+| **Ⓐ** | Build with the current tool. Hold and move to drag-build | Select or confirm |
+| **Ⓑ** | Open the build sheet | Back or close |
+| **Crank** | Zoom between near and far | Scroll lists, adjust budget sliders, switch tabs and map layers |
+| **Menu button** | Speed, zoom and a shortcut to the Game menu | |
 
-### Desktop (SDL2 / Keyboard & Mouse)
+## Install
 
-#### Navigation & Map Interaction
-| Input | Action |
-| :--- | :--- |
-| **Arrow Keys** / **Numpad (8, 2, 4, 6)** | Move map cursor (with edge scrolling) |
-| **Left Mouse Click** | Place active tool / select UI item |
-| **Left Mouse Click + Drag** | Continuously pave roads, wires, or bulldoze |
-| **Right Mouse Click** | Inspect / query tile under mouse pointer |
-| **Mouse Wheel** | Cycle through construction tools |
-| **Spacebar** / **Enter** / **Z** | Place active tool (Primary Action) |
-| **X** / **Backspace** | Inspect zone query / Cancel (Secondary Action) |
+Each push to `main` builds the game automatically (see [Actions](../../actions)), and tagged versions are published on the [Releases](../../releases) page.
 
-#### Direct Tool Shortcuts
-| Key | Tool | Size | Cost |
-| :---: | :--- | :---: | :---: |
-| <kbd>R</kbd> | Road | 1x1 | $10 |
-| <kbd>W</kbd> | Power Wire | 1x1 | $5 |
-| <kbd>B</kbd> | Bulldozer | 1x1 | $1 |
-| <kbd>Z</kbd> | Residential Zone | 3x3 | $100 |
-| <kbd>C</kbd> | Commercial Zone | 3x3 | $100 |
-| <kbd>I</kbd> | Industrial Zone | 3x3 | $100 |
-| <kbd>F</kbd> | Fire Station | 3x3 | $500 |
-| <kbd>O</kbd> | Police Department | 3x3 | $500 |
-| <kbd>S</kbd> | Sports Stadium | 4x4 | $3,000 |
-| <kbd>P</kbd> | Public Park | 1x1 | $10 |
-| <kbd>T</kbd> | Seaport | 4x4 | $5,000 |
-| <kbd>L</kbd> | Coal Power Plant | 4x4 | $3,000 |
-| <kbd>N</kbd> | Nuclear Power Plant | 4x4 | $5,000 |
-| <kbd>A</kbd> | Airport | 6x6 | $10,000 |
-| <kbd>Q</kbd> | Query / Inspect Tool | 1x1 | Free |
+1. Download `Micropolis.pdx.zip` from the latest release, or the build artifact of a recent workflow run.
+2. Either:
+   - **Sideload:** upload the zip at [play.date/account/sideload](https://play.date/account/sideload/), or
+   - **USB:** connect the Playdate, put it in disk mode (*Settings → System → Reboot to Data Disk*), unzip, and copy `Micropolis.pdx` into the `Games` folder.
 
-#### Modals & Windows
-| Key | Window / Function |
-| :---: | :--- |
-| <kbd>U</kbd> | Open City Budget & Tax Rates dialog |
-| <kbd>V</kbd> | Open City Evaluation & Public Opinion dialog |
-| <kbd>X</kbd> | Open Disasters trigger menu |
-| <kbd>G</kbd> | Open Scenario campaign menu |
-| <kbd>Tab</kbd> | Cycle Map Overlays (*Normal*, *Power*, *Traffic*, *Pollution*, *Crime*, *Land Value*) |
-| <kbd>M</kbd> | Toggle Minimap Radar ON / OFF |
-| <kbd>Escape</kbd> | Open In-Game System Menu / Return |
+## Building
 
-#### Simulation Speed
-| Key | Pacing |
-| :---: | :--- |
-| <kbd>1</kbd> | Pause Simulation |
-| <kbd>2</kbd> | Slow Speed |
-| <kbd>3</kbd> | Normal Speed |
-| <kbd>4</kbd> | Fast Speed |
+You need:
 
-#### Interactive GUI Elements
-- **Bottom Tool Tray**: Click on any tool icon to select it immediately.
-- **Minimap Radar**: Click anywhere inside the 60x50 radar to jump the camera directly to that map region.
-- **Status Bar**: Click on the Funds display to open the Budget dialog; click on the Overlay text to cycle layers; click on the Speed indicator to toggle simulation speed.
-
----
-
-### Playdate Handheld Console
-
-| Control | Function |
-| :--- | :--- |
-| **D-Pad** | Navigate map cursor (features initial delay and fast hold-acceleration; camera smoothly tracks edges) |
-| **The Crank** | Rotate clockwise / counter-clockwise to cycle through construction tools |
-| **Bumper (L / R)** | Cycle through construction tools |
-| **Button (A)** | Build active tool / confirm selection / hold while moving D-pad to drag-build |
-| **Button (B)** | Query tile / close active modal dialog / return to game |
-| **System Menu Button** | Opens Playdate OS native menu with items: **"City Budget"**, **"Evaluation"**, and **"System Menu"** |
-
----
-
-## Building & Running
-
-### 1. Desktop (Meson & Ninja)
-
-Requirements: C99 compiler (`gcc` or `clang`), `meson`, `ninja`, and `SDL2` development libraries.
+- the [Playdate SDK](https://play.date/dev/) (3.x), with `PLAYDATE_SDK_PATH` pointing at it,
+- an ARM GCC toolchain that includes newlib: [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads), or on Ubuntu, `gcc-arm-none-eabi` plus `libnewlib-arm-none-eabi`. Homebrew's `arm-none-eabi-gcc` formula has no C library, so it won't work.
+- CMake and Python 3 with Pillow.
 
 ```bash
-# Configure the build directory
-meson setup build
-
-# Compile the game executable
-meson compile -C build
-
-# Run unit tests
-meson test -C build
-
-# Launch Micropolis
-./build/micropolis
+python3 tools/prep_assets.py
 ```
-
-### 2. Playdate Simulator
-
-Requirements: [Panic Playdate SDK](https://play.date/dev/) with `PLAYDATE_SDK_PATH` configured.
 
 ```bash
-# Build the simulator shared library and PDX bundle
-make -C build-pd
-
-# Run in Playdate Simulator
-$PLAYDATE_SDK_PATH/bin/PlaydateSimulator micropolis.pdx
+BUILD_DEVICE=1 cmake -S . -B build-device -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$PLAYDATE_SDK_PATH/C_API/buildsupport/arm.cmake
 ```
-
-### 3. Playdate Hardware Device (ARM Cortex-M7)
-
-Requirements: `arm-none-eabi-gcc` cross-compiler and Playdate SDK.
 
 ```bash
-# Build the stripped ARM ELF binary and package the device PDX bundle
-make -C build-pd-device
-
-# Install on Playdate over USB
-$PLAYDATE_SDK_PATH/bin/pdutil /dev/ttyACM0 install micropolis_DEVICE.pdx
+cmake --build build-device
 ```
 
----
+This produces `micropolis_DEVICE.pdx`. `tools/prep_assets.py` generates `Source/assets` from `assets/` and from fonts that ship with the SDK, so run it again whenever art, fonts or icons change.
 
-## Attribution & Credits
+### Repository layout
 
-- **Will Wright**: Original *SimCity* concept, game design, cellular automata simulation models, and tile graphics.
-- **Maxis**: Original game development and commercial release (1989).
-- **Don Hopkins & Electronic Arts**: Releasing the SimCity source code as **Micropolis** under the GNU General Public License v3 (GPL v3) for the One Laptop per Child (OLPC) project.
-- **vtcity Project**: Developing the Unix baseline that decoupled simulation routines from legacy X11/Tk libraries.
-- **Tiny Engine**: High-performance 2D engine framework and multi-platform abstraction layer.
+| Path | What's there |
+|---|---|
+| `src/micropolis/` | The Micropolis simulation (C99 port of the original code) |
+| `src/game.c`, `src/screens.c`, `src/scene_title.c` | The Playdate interface: map view, HUD, build sheet, pages, menus and title |
+| `src/ui.c`, `src/map_view.c` | UI kit (text, icons, panels, hints) and the cached map renderer |
+| `engine/` | A small Tiny Engine–compatible layer written directly on the Playdate C API: rendering, images, fonts, sound, scenes, input, files |
+| `assets/` | Source art and sounds: the original black-and-white Micropolis tiles, sprites and sound effects |
+| `tools/prep_assets.py`, `tools/art.py` | Asset pipeline, plus the pixel art for the 16px tool icons |
+| `tools/harness/` | Headless screenshot harness (see below) |
 
----
+### Screenshot harness
+
+`tools/harness` builds the game against a fake Playdate API that draws into an in-memory 1-bit framebuffer. A script of button presses and crank turns drives it and saves PNG screenshots. All the screenshots in this README come from it. It currently needs macOS with Xcode.
+
+```bash
+tools/harness/run.sh tools/harness/tour.txt
+```
+
+Screenshots go to `tools/harness/out/`. Scripts are plain text: `tap a`, `hold right`, `crank 70 10`, `frames 30`, `shot name`.
+
+## Credits
+
+- **SimCity** was designed by Will Wright and published by Maxis in 1989.
+- **Micropolis** is the GPL release of SimCity's source by Electronic Arts, made possible by Don Hopkins.
+- **[vtcity](https://github.com/tenox7/vtcity)** by tenox7 is the streamlined Unix C version this port started from.
+- **[tiny_micropolis](https://github.com/icedman/tiny_micropolis)** by icedman is the Tiny Engine port of the simulation, which this project builds on.
+- **Fonts and button glyphs** come from the Playdate SDK by Panic: Nontendo (by Shaun Inman), plus symbols from Pedallica, Newsleak Serif and Bitmore, and the system button glyphs from Asheville Sans.
+- **City art and sounds** are the original Micropolis black-and-white tiles, sprites and sound effects.
+
+## AI disclosure
+
+Most of the code in this fork was written by Claude, an AI model made by Anthropic, working in Claude Code. [@gopherbone](https://github.com/gopherbone) directed it: choosing the design, giving feedback on each screen, and play-testing on a real Playdate. Claude's part covers:
+
+- the Playdate engine layer in `engine/`,
+- the redesigned interface (`game.c`, `screens.c`, `scene_title.c`, `ui.c`, `map_view.c`),
+- the 16px tool icons in `tools/art.py`,
+- the asset pipeline, the screenshot harness and the GitHub Actions workflow,
+- bug fixes to the port (stack overflow when saving, the year showing as 0, new cities starting with 0% tax and funding),
+- this README.
+
+The simulation in `src/micropolis/` is the original Micropolis code as ported by vtcity and tiny_micropolis.
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0** (GPLv3) to align with the original upstream release of Micropolis. See the `LICENSE` file for full terms and conditions.
+Micropolis is free software released under the [GNU General Public License v3](https://www.gnu.org/licenses/gpl-3.0.html), and this fork is distributed under the same terms. SimCity is a trademark of Electronic Arts. This project is not affiliated with or endorsed by Electronic Arts, Maxis or Panic.

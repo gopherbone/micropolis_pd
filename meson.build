@@ -94,7 +94,9 @@ micropolis_lib = static_library('micropolis_sim',
 )
 
 executable('micropolis',
-  ['src/game.c', 'src/sim_render.c', 'src/sim_input.c', 'src/scene_title.c'],
+  ['src/game.c', 'src/ui.c',
+  'src/map_view.c',
+  'src/screens.c', 'src/sim_input.c', 'src/scene_title.c'],
   include_directories: inc_dir,
   link_with: [engine_lib, micropolis_lib],
   dependencies: deps

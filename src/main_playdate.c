@@ -1,39 +1,15 @@
 #include "game.h"
 #include "scene_title.h"
 #include "sim_input.h"
-#include "../../src/core/render.h"
-#include "../../src/core/scene.h"
-#include "../../src/core/sound.h"
-#include "../../src/platform/platform.h"
+#include "render.h"
+#include "scene.h"
+#include "sound.h"
+#include "platform.h"
 #include "pd_api.h"
 
 extern void platform_playdate_set_api(PlaydateAPI *api);
 
 static float prev_time = 0.0f;
-
-static void pd_menu_budget_cb(void *userdata) {
-    (void)userdata;
-    if (scene_get_current() != game_get_scene()) {
-        scene_set(game_get_scene());
-    }
-    game_open_budget();
-}
-
-static void pd_menu_eval_cb(void *userdata) {
-    (void)userdata;
-    if (scene_get_current() != game_get_scene()) {
-        scene_set(game_get_scene());
-    }
-    game_open_eval();
-}
-
-static void pd_menu_sysmenu_cb(void *userdata) {
-    (void)userdata;
-    if (scene_get_current() != game_get_scene()) {
-        scene_set(game_get_scene());
-    }
-    game_open_system_menu();
-}
 
 static int update(void *userdata) {
     (void)userdata;
@@ -55,7 +31,6 @@ static int update(void *userdata) {
     platform_poll_events();
     scene_update(dt);
     scene_draw();
-    platform_show_fps();
     platform_present();
     return 1;
 }
@@ -67,20 +42,18 @@ int eventHandler(PlaydateAPI *pd, PDSystemEvent event, uint32_t arg) {
     (void)arg;
     if (event == kEventInit) {
         platform_playdate_set_api(pd);
-        pd->display->setRefreshRate(60.0f);
+        pd->display->setRefreshRate(30.0f);
         platform_init("micropolis", 400, 240);
         render_init(400, 240);
         sound_init(44100);
         scene_manager_init();
 
-        /* Register Playdate native system menu items */
-        pd->system->addMenuItem("System Menu", pd_menu_sysmenu_cb, NULL);
-        pd->system->addMenuItem("City Budget", pd_menu_budget_cb, NULL);
-        pd->system->addMenuItem("Evaluation", pd_menu_eval_cb, NULL);
-
-        /* Boot into title scene */
+        /* Boot into title scene; the game scene adds its own system menu items */
         scene_set(scene_title_create());
         pd->system->setUpdateCallback(update, NULL);
+    } else if (event == kEventTerminate || event == kEventLock || event == kEventLowPower) {
+        /* "Continue" picks up exactly where you left off */
+        game_autosave();
     }
     return 0;
 }
